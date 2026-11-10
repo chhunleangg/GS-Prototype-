@@ -1,0 +1,16 @@
+**/node_modules
+**/dist
+**/coverage
+.git
+.github
+.env
+.env.*
+!.env.example
+server/storage
+storage
+backups
+logs
+samples
+docs
+GS Dashboard Test
+*.log

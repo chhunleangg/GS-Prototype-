@@ -1,0 +1,14 @@
+node_modules
+dist
+.env
+.env.*.local
+server/storage/*
+!server/storage/.gitkeep
+coverage
+*.log
+.DS_Store
+/storage/
+/backups/
+logs/
+.env.production
+desktop.ini

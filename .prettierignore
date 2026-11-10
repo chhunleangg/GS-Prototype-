@@ -1,0 +1,6 @@
+node_modules
+dist
+server/drizzle
+client/public
+client/src/components/bklit
+pnpm-lock.yaml
