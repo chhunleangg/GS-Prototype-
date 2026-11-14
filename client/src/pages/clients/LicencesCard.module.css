@@ -1,0 +1,147 @@
+/* Client Details → Licences & Documents and Portal accounts. */
+.scroll {
+  overflow-x: auto;
+}
+.table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 12.5px;
+}
+.table th {
+  padding: 6px 8px;
+  text-align: left;
+  font-size: 11px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+  color: var(--text-tertiary);
+  border-bottom: 1px solid var(--border-subtle);
+}
+.table td {
+  padding: 8px;
+  vertical-align: top;
+  font-weight: 600;
+  color: var(--text-secondary);
+  border-bottom: 1px solid var(--border-subtle);
+}
+.table b {
+  color: var(--text-primary);
+}
+.old td {
+  opacity: 0.6;
+}
+.sub {
+  margin-top: 2px;
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--text-tertiary);
+}
+.ref {
+  overflow-wrap: anywhere;
+}
+.nowrap {
+  white-space: nowrap;
+}
+.actions {
+  text-align: right;
+  white-space: nowrap;
+}
+.actions > * + * {
+  margin-left: 4px;
+}
+.tool {
+  padding: 3px 8px;
+  border: 1px solid var(--border-subtle);
+  border-radius: 6px;
+  background: var(--bg-surface);
+  font-family: var(--font-main);
+  font-size: 11px;
+  font-weight: 700;
+  color: var(--text-secondary);
+  cursor: pointer;
+}
+.icon {
+  display: inline-grid;
+  place-items: center;
+  width: 24px;
+  height: 24px;
+  vertical-align: middle;
+  border: 1px solid var(--border-subtle);
+  border-radius: 6px;
+  background: var(--bg-surface);
+  color: var(--text-secondary);
+  cursor: pointer;
+}
+.tool:hover,
+.icon:hover {
+  color: var(--accent-primary);
+  border-color: var(--accent-primary);
+}
+.alert {
+  margin-bottom: 10px;
+  padding: 8px 12px;
+  border-radius: 8px;
+  background: var(--status-exception-bg);
+  color: var(--status-exception-fg);
+  font-size: 12.5px;
+  font-weight: 700;
+}
+.muted {
+  color: var(--text-tertiary);
+  font-size: 12px;
+  font-weight: 600;
+}
+.toggle {
+  margin-top: 8px;
+  padding: 0;
+  border: 0;
+  background: none;
+  font-family: var(--font-main);
+  font-size: 12px;
+  font-weight: 700;
+  color: var(--accent-primary);
+  cursor: pointer;
+}
+.fileRow {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 8px 10px;
+  border: 1px solid var(--border-subtle);
+  border-radius: 8px;
+  font-size: 12.5px;
+  font-weight: 600;
+  color: var(--text-secondary);
+}
+.portal {
+  padding: 10px 12px;
+  border: 1px solid var(--border-subtle);
+  border-radius: 8px;
+  background: var(--bg-surface-elevated);
+}
+.portal + .portal {
+  margin-top: 8px;
+}
+.portalHead {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.portalHead b {
+  flex: 1;
+  min-width: 0;
+  font-size: 13px;
+  color: var(--text-primary);
+}
+.portalBody {
+  margin-top: 4px;
+  font-size: 12px;
+  font-weight: 600;
+  line-height: 1.6;
+  color: var(--text-secondary);
+  overflow-wrap: anywhere;
+}
+.portalBody a {
+  color: var(--accent-primary);
+}

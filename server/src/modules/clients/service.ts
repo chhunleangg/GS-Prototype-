@@ -5,6 +5,7 @@ import { db } from '../../db/client';
 import { clients, consignees, countries } from '../../db/schema';
 import { env } from '../../config/env';
 import { listSuppliers } from './parties';
+import { listLicences } from './licences';
 import { audit } from '../../lib/audit';
 import { conflict, notFound } from '../../lib/errors';
 import {
@@ -107,6 +108,10 @@ export async function getClient(id: string, withProfit: boolean): Promise<Client
     address: row!.address,
     addressKm: row!.addressKm,
     vattin: row!.vattin,
+    cin: row!.cin,
+    businessType: row!.businessType as ClientDetail['businessType'],
+    mainActivity: row!.mainActivity,
+    lastVerifiedOn: row!.lastVerifiedOn,
     contactName: row!.contactName,
     contactEmail: row!.contactEmail,
     contactPhone: row!.contactPhone,
@@ -125,11 +130,37 @@ export async function getClient(id: string, withProfit: boolean): Promise<Client
     cutStockItems: e.cut,
     consignees: consigneeRows,
     suppliers: supplierRows,
+    licences: await listLicences(id),
     recentShipments: recent,
   };
 }
 
 type Tx = Parameters<Parameters<typeof db.transaction>[0]>[0];
+
+/**
+ * One company, one tax number and one registration number: a VAT-TIN or CIN already used by
+ * another client is refused (it is almost always the same company entered twice).
+ */
+async function assertUniqueIds(
+  tx: Tx,
+  input: { vattin?: string | null | undefined; cin?: string | null | undefined },
+  selfId: string | null,
+) {
+  for (const [col, label, value] of [
+    [sql`c.vattin`, 'VAT-TIN', input.vattin],
+    [sql`c.cin`, 'CIN', input.cin],
+  ] as const) {
+    if (!value) continue;
+    const [other] = await queryRows<{ name: string }>(
+      tx,
+      sql`SELECT c.name FROM clients c
+          WHERE c.deleted_at IS NULL AND upper(replace(${col}, '-', '')) = upper(replace(${value}, '-', ''))
+            ${selfId ? sql`AND c.id <> ${selfId}` : sql``}
+          LIMIT 1`,
+    );
+    if (other) throw conflict(`${label} ${value} is already used by ${other.name}`);
+  }
+}
 
 /**
  * The client's own consignee: one named exactly as its legal name and linked to it (imports
@@ -157,6 +188,7 @@ async function ensureOwnConsignee(tx: Tx, clientId: string, legalName: string | 
 
 export async function createClient(input: ClientInputParsed, req: Request): Promise<string> {
   return db.transaction(async (tx) => {
+    await assertUniqueIds(tx, input, null);
     const [row] = await tx
       .insert(clients)
       .values({ ...input, commissionUsd: input.commissionUsd! })
@@ -179,6 +211,15 @@ export async function updateClient(
       .where(and(eq(clients.id, id), isNull(clients.deletedAt)))
       .for('update');
     if (!before) throw notFound('Client');
+    // Only a changed number is checked, so an older duplicate doesn't block other edits.
+    await assertUniqueIds(
+      tx,
+      {
+        vattin: input.vattin !== before.vattin ? input.vattin : undefined,
+        cin: input.cin !== before.cin ? input.cin : undefined,
+      },
+      id,
+    );
     const patch = Object.fromEntries(Object.entries(input).filter(([, v]) => v !== undefined));
     if (patch.commissionUsd === null) delete patch.commissionUsd;
     const [after] = await tx.update(clients).set(patch).where(eq(clients.id, id)).returning();

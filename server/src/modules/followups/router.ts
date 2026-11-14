@@ -60,6 +60,7 @@ followUpsRouter.get('/', requirePermission('followups:read'), async (req, res) =
   if (q.priority) c.push(sql`f.priority = ${q.priority}`);
   if (q.assigneeId) c.push(sql`f.assignee_id = ${q.assigneeId}`);
   if (q.clientId) c.push(sql`f.client_id = ${q.clientId}`);
+  if (q.shipmentId) c.push(sql`f.shipment_id = ${q.shipmentId}`);
   const scoped = clientCondition(FU_CLIENT, scopeClients(req));
   if (scoped) c.push(scoped);
   if (q.overdue) tab.push(sql`f.status <> 'DONE' AND f.due_at < now()`);

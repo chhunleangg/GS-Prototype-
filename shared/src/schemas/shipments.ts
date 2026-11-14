@@ -215,6 +215,10 @@ export const shipmentInputSchema = z
     material: optText(60),
     bookingNo: optText(60),
     hblNo: optText(60),
+    blDate: optDate,
+    incoterm: optText(3),
+    currency: optText(3),
+    exchangeRate: decimal(4, { min: 0 }),
     vesselName: optText(80),
     voyageNo: optText(30),
     crd: optDate,
@@ -465,6 +469,10 @@ export interface ShipmentDetail {
   material: string | null;
   bookingNo: string | null;
   hblNo: string | null;
+  blDate: string | null;
+  incoterm: string | null;
+  currency: string | null;
+  exchangeRate: string | null;
   vesselName: string | null;
   voyageNo: string | null;
   crd: string | null;
@@ -721,4 +729,14 @@ export interface PermitSetResponse {
   cover: { missing: string[]; data: PermitCover | null };
   invoices: { missing: string[]; data: PermitInvoice[] };
   authorize: AuthorizeLetterResponse;
+}
+
+/** GET /shipments/:id/history: one saved change, newest first (from the audit log). */
+export interface ShipmentHistoryEntry {
+  id: number;
+  at: string;
+  action: string;
+  userName: string | null;
+  /** The shipment fields this save changed (form field names); empty when unknown. */
+  changed: string[];
 }

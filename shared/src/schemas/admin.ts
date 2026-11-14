@@ -94,13 +94,14 @@ export interface RoleInfo {
 /* ------------------------------ Follow-ups ------------------------------ */
 
 /** The area each automatic check belongs to: how they are grouped and named everywhere. */
-export const FOLLOW_UP_AREAS = ['IMPORT', 'EXPORT', 'CONTAINER', 'CDC'] as const;
+export const FOLLOW_UP_AREAS = ['IMPORT', 'EXPORT', 'CONTAINER', 'CDC', 'CLIENT'] as const;
 export type FollowUpArea = (typeof FOLLOW_UP_AREAS)[number];
 export const FOLLOW_UP_AREA_LABEL: Record<FollowUpArea, string> = {
   IMPORT: 'Import',
   EXPORT: 'Export',
   CONTAINER: 'Containers',
   CDC: 'CDC',
+  CLIENT: 'Clients',
 };
 
 /**
@@ -233,6 +234,14 @@ export const FOLLOW_UP_RULES = [
     description: 'A CDC master-list item has imported more than its licensed quantity.',
     priority: 'HIGH',
   },
+  {
+    area: 'CLIENT',
+    code: 'CLIENT_LICENCE_EXPIRING',
+    label: 'Licence expiring',
+    description:
+      'A client licence (patent, QIP, MOC…) expires within 30 days or has expired, and no renewal is recorded.',
+    priority: 'HIGH',
+  },
 ] as const satisfies readonly {
   area: FollowUpArea;
   code: string;
@@ -308,6 +317,8 @@ export const followUpListQuerySchema = paginationQuerySchema.extend({
   priority: z.enum(FOLLOW_UP_PRIORITIES).optional(),
   assigneeId: z.string().uuid().optional(),
   clientId: z.string().uuid().optional(),
+  /** Only the follow-ups raised for this shipment (its Queries tab). */
+  shipmentId: z.string().uuid().optional(),
   overdue: boolParam,
   /** AUTO = raised by a check, MANUAL = added by hand. */
   source: z.enum(['AUTO', 'MANUAL']).optional(),

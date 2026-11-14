@@ -6,6 +6,7 @@ import { createApp } from '../../app';
 import { db, pool } from '../../db/client';
 import {
   cargoInvoices,
+  clientLicences,
   containerSealPlans,
   containers,
   customsDeclarations,
@@ -179,6 +180,13 @@ describe('follow-up checks', () => {
       qty: '100',
       openingImportedQty: '120',
     });
+    // CLIENT_LICENCE_EXPIRING: a patent expiring in 10 days; a far-off one and a renewed
+    // (superseded) one are near misses.
+    await db.insert(clientLicences).values([
+      { clientId: basics.jr.id, type: 'PATENT', refNo: 'P-OLD', expiryDate: day(-20) },
+      { clientId: basics.jr.id, type: 'PATENT', refNo: 'P-NOW', expiryDate: day(10) },
+      { clientId: basics.jr.id, type: 'QIP', refNo: 'QIP-FAR', expiryDate: day(90) },
+    ]);
 
     const run = await runFollowUpRules();
     const created = Object.fromEntries(run.rules.map((r) => [r.code, r.created]));

@@ -480,11 +480,27 @@ fieldset:disabled .typeTile span {
   color: var(--text-primary);
 }
 .formSectionTitle {
+  display: flex;
+  align-items: center;
+  gap: 8px;
   padding-bottom: 8px;
   border-bottom: 2px solid var(--accent-primary);
   font-size: 13.5px;
   font-weight: 700;
   color: var(--text-primary);
+}
+
+/* Header tab: the NSW application-form layout, a narrow column beside a wide one. */
+.nswCols {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 2fr);
+  gap: 20px 28px;
+}
+.formSectionTitle svg {
+  width: 16px;
+  height: 16px;
+  color: var(--accent-primary);
+  flex-shrink: 0;
 }
 
 /* ---------- Header: who owns it ---------- */
@@ -637,7 +653,11 @@ fieldset:disabled .typeTile span {
   font-weight: 700;
   color: var(--text-primary);
 }
+.partiesAgents {
+  margin-top: 24px;
+}
 .partyTag {
+  margin-left: 4px;
   padding: 2px 8px;
   border-radius: 6px;
   font-size: 11px;
@@ -842,7 +862,8 @@ fieldset:disabled .typeTile span {
   .parties {
     grid-template-columns: 1fr;
   }
-  .formCols {
+  .formCols,
+  .nswCols {
     grid-template-columns: 1fr;
   }
   .setupClient {
@@ -886,4 +907,25 @@ fieldset:disabled .typeTile span {
   color: var(--status-pending-fg);
   font-size: 13px;
   font-weight: 600;
+}
+
+/* Customs-style tabs: Khmer on top, English under it. */
+.tabText {
+  display: inline-flex;
+  flex-direction: column;
+  align-items: flex-start;
+  line-height: 1.25;
+}
+.tabKm {
+  font-size: 13px;
+}
+.tabEn {
+  font-size: 10.5px;
+  font-weight: 500;
+  opacity: 0.8;
+}
+
+.licenceWarn {
+  color: var(--status-exception-fg);
+  font-weight: 700;
 }

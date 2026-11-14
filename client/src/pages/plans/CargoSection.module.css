@@ -531,3 +531,64 @@
 .gRow:has(+ .gTotal) {
   border-bottom: 0;
 }
+
+/* ---------- Invoice tab (NSW layout) ---------- */
+.listBlock {
+  margin-top: 24px;
+}
+.listHead {
+  display: flex;
+  align-items: flex-end;
+  gap: 12px;
+  margin-bottom: 6px;
+}
+.listHead > h4 {
+  flex: 1;
+}
+.invTable {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 12.5px;
+}
+.invTable th {
+  padding: 10px 8px;
+  border-bottom: 1px solid var(--border-subtle);
+  color: var(--accent-primary);
+  font-size: 11.5px;
+  font-weight: 700;
+  text-align: left;
+  white-space: nowrap;
+}
+.invTable td {
+  padding: 8px;
+  border-bottom: 1px solid var(--border-subtle);
+  vertical-align: middle;
+}
+.invTable tr[data-active='true'] td:first-child {
+  box-shadow: inset 3px 0 0 var(--accent-primary);
+}
+.dateWithItems {
+  display: flex;
+  gap: 8px;
+}
+.dateWithItems > input {
+  flex: 1;
+  min-width: 0;
+}
+.delSolid {
+  display: grid;
+  place-items: center;
+  width: 32px;
+  height: 32px;
+  border: none;
+  border-radius: 6px;
+  background: var(--status-exception-fg);
+  color: #fff;
+  font-size: 18px;
+  font-weight: 700;
+  cursor: pointer;
+}
+.delSolid:disabled {
+  opacity: 0.35;
+  cursor: not-allowed;
+}

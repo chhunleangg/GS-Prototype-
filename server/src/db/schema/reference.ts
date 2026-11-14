@@ -85,6 +85,13 @@ export const clients = pgTable(
     address: text('address'),
     addressKm: text('address_km'),
     vattin: text('vattin'),
+    /** MOC company registration number (CIN), e.g. KH2024106187235. */
+    cin: text('cin'),
+    /** FOB, CMT or FOB_CMT (CLIENT_BUSINESS_TYPES). */
+    businessType: text('business_type'),
+    mainActivity: text('main_activity'),
+    /** When the details were last checked against the government portal. */
+    lastVerifiedOn: date('last_verified_on'),
     contactName: text('contact_name'),
     contactEmail: text('contact_email'),
     contactPhone: text('contact_phone'),
@@ -169,6 +176,61 @@ export const clientNotes = pgTable(
     ...timestamps,
   },
   (t) => [index('client_notes_client_idx').on(t.clientId)],
+);
+
+/**
+ * Client Details → Licences & Documents: a registration or licence (patent, QIP, MOC…) with
+ * its validity and scan. A follow-up is raised before it expires.
+ */
+export const clientLicences = pgTable(
+  'client_licences',
+  {
+    id: id(),
+    clientId: uuid('client_id')
+      .notNull()
+      .references(() => clients.id, { onDelete: 'cascade' }),
+    type: text('type').notNull(), // LICENCE_TYPES code
+    refNo: text('ref_no').notNull(),
+    issuer: text('issuer'),
+    startDate: date('start_date'),
+    expiryDate: date('expiry_date'),
+    documentId: uuid('document_id'),
+    notes: text('notes'),
+    createdById: uuid('created_by_id').references(() => users.id, { onDelete: 'set null' }),
+    updatedById: uuid('updated_by_id').references(() => users.id, { onDelete: 'set null' }),
+    ...timestamps,
+  },
+  (t) => [
+    index('client_licences_client_idx').on(t.clientId),
+    index('client_licences_expiry_idx').on(t.expiryDate),
+  ],
+);
+
+/**
+ * Client Details → Portal accounts: who logs into which government portal for the client.
+ * Never a password: `vault_ref` says where it is kept (or a hidden Remark).
+ */
+export const clientPortalAccounts = pgTable(
+  'client_portal_accounts',
+  {
+    id: id(),
+    clientId: uuid('client_id')
+      .notNull()
+      .references(() => clients.id, { onDelete: 'cascade' }),
+    portal: text('portal').notNull(), // PORTALS code
+    url: text('url'),
+    username: text('username').notNull(),
+    holderName: text('holder_name'),
+    email: text('email'),
+    phone: text('phone'),
+    role: text('role'),
+    vaultRef: text('vault_ref'),
+    notes: text('notes'),
+    createdById: uuid('created_by_id').references(() => users.id, { onDelete: 'set null' }),
+    updatedById: uuid('updated_by_id').references(() => users.id, { onDelete: 'set null' }),
+    ...timestamps,
+  },
+  (t) => [index('client_portal_accounts_client_idx').on(t.clientId)],
 );
 
 /** Replaces the prototype's localStorage "Add New" lists for simple dropdowns. */

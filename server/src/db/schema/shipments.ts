@@ -75,6 +75,13 @@ export const shipments = pgTable(
     // Booking / BL / vessel
     bookingNo: text('booking_no'),
     hblNo: text('hbl_no'),
+    /** Date on the B/L, AWB or road bill. */
+    blDate: date('bl_date'),
+    /** Invoice terms as on the customs declaration: Incoterm (e.g. FOB, CIF) and currency. */
+    incoterm: text('incoterm'),
+    currency: text('currency'),
+    /** KHR per one unit of the currency (the customs exchange rate). */
+    exchangeRate: rate('exchange_rate'),
     vesselName: text('vessel_name'),
     voyageNo: text('voyage_no'),
 

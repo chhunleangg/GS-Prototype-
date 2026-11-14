@@ -7,6 +7,7 @@ import {
   type Paginated,
   type Permission,
   type ShipmentDetail,
+  type ShipmentHistoryEntry,
   type ShipmentInputParsed,
   type ShipmentListItem,
   type ShipmentListSummary,
@@ -31,6 +32,7 @@ import { env } from '../../config/env';
 import { audit } from '../../lib/audit';
 import { AppError, businessRule, conflict, forbidden, notFound } from '../../lib/errors';
 import {
+  isoTs,
   likePattern,
   orderBy,
   paginate,
@@ -343,6 +345,10 @@ export async function getShipment(id: string): Promise<ShipmentDetail> {
     material: r.material,
     bookingNo: r.bookingNo,
     hblNo: r.hblNo,
+    blDate: r.blDate,
+    incoterm: r.incoterm,
+    currency: r.currency,
+    exchangeRate: r.exchangeRate && String(Number(r.exchangeRate)),
     vesselName: r.vesselName,
     voyageNo: r.voyageNo,
     crd: r.crd,
@@ -843,4 +849,56 @@ export async function existingInvoiceNumbers(
       ${exceptShipmentId ? sql`AND s.id <> ${exceptShipmentId}` : sql``}`,
   );
   return new Map(rows.map((r) => [r.invoice_no.toUpperCase(), r.reference]));
+}
+
+/** "2026-11-02" and "2026-11-02T00:00:00.000Z", 12 and "12.00", null and "": the same value. */
+const sameValue = (a: unknown, b: unknown): boolean => {
+  if (typeof a === 'object' || typeof b === 'object')
+    return JSON.stringify(a ?? null) === JSON.stringify(b ?? null);
+  const x = String(a ?? '').trim();
+  const y = String(b ?? '').trim();
+  if (x === y) return true;
+  if (x && y && !Number.isNaN(Number(x)) && !Number.isNaN(Number(y)))
+    return Number(x) === Number(y);
+  return (
+    x.slice(0, 10) === y.slice(0, 10) &&
+    /^\d{4}-\d{2}-\d{2}/.test(x) &&
+    /^\d{4}-\d{2}-\d{2}/.test(y)
+  );
+};
+
+/**
+ * Who saved the shipment and when, newest first. Each save stores the whole form, so a save's
+ * changes are the fields that differ from the save before it (the first update is compared
+ * with the row as it was).
+ */
+export async function shipmentHistory(id: string): Promise<ShipmentHistoryEntry[]> {
+  const rows = await queryRows<{
+    id: number;
+    at: string;
+    action: string;
+    userName: string | null;
+    before: Record<string, unknown> | null;
+    after: Record<string, unknown> | null;
+  }>(
+    db,
+    sql`SELECT a.id, ${isoTs('a.at')} AS at, a.action, u.full_name AS "userName", a.before, a.after
+        FROM audit_log a LEFT JOIN users u ON u.id = a.user_id
+        WHERE a.entity = 'shipment' AND a.entity_id = ${id}
+        ORDER BY a.at, a.id`,
+  );
+  let prev: Record<string, unknown> | null = null;
+  const out: ShipmentHistoryEntry[] = [];
+  for (const r of rows) {
+    let changed: string[] = [];
+    if (r.action === 'UPDATE' && r.after) {
+      const base = prev ?? r.before ?? {};
+      changed = Object.keys(r.after).filter(
+        (k) => k !== 'reference' && k in base && !sameValue(base[k], r.after![k]),
+      );
+    }
+    if (r.after) prev = r.after;
+    out.push({ id: r.id, at: r.at, action: r.action, userName: r.userName, changed });
+  }
+  return out.reverse();
 }

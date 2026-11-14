@@ -294,6 +294,13 @@ shipmentsRouter.get(
   },
 );
 
+/** Who saved this shipment and what changed, newest first (its Audit tab). */
+shipmentsRouter.get('/:id/history', requirePermission('shipments:read'), async (req, res) => {
+  const { id } = parse(idParam, req.params);
+  assertClientVisible(req, await svc.shipmentClientId(id), 'Shipment');
+  res.json(await svc.shipmentHistory(id));
+});
+
 shipmentsRouter.get('/:id', requirePermission('shipments:read'), async (req, res) => {
   const detail = await svc.getShipment(parse(idParam, req.params).id);
   assertClientVisible(req, detail.clientId, 'Shipment');

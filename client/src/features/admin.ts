@@ -55,12 +55,13 @@ export const usePublicHolidays = (year: number) =>
     queryFn: () => api<PublicHoliday[]>('/settings/public-holidays', { query: { year } }),
   });
 
-export const useFollowUps = (q: Query) =>
+export const useFollowUps = (q: Query, enabled = true) =>
   useQuery({
     queryKey: ['follow-ups', q],
     queryFn: () =>
       api<Paginated<FollowUpRow> & { summary: FollowUpSummary }>('/follow-ups', { query: q }),
     placeholderData: keepPreviousData,
+    enabled,
   });
 
 export const useDocuments = (q: Query, enabled = true) =>

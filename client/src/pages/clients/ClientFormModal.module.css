@@ -89,3 +89,10 @@
     grid-column: 1 / -1;
   }
 }
+.hintWarn {
+  grid-column: 1 / -1;
+  margin: -4px 0 0;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--status-pending-fg, #b45309);
+}

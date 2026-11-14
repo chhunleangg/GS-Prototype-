@@ -1,6 +1,7 @@
 import { eq, sql, type SQL } from 'drizzle-orm';
 import {
   FOLLOW_UP_RULES,
+  LICENCE_WARN_DAYS,
   type FollowUpRuleCode,
   type FollowUpRuleRun,
   type FollowUpRuleStatus,
@@ -186,6 +187,21 @@ const CHECKS: Record<FollowUpRuleCode, SQL> = {
            NULL AS "dueDate", NULL::uuid AS "assigneeId"
     FROM cut_stock_items i JOIN cut_stock_balances b ON b.item_id = i.id JOIN clients c ON c.id = i.client_id
     WHERE i.deleted_at IS NULL AND b.balance < 0`,
+  // Due on the expiry date; closes itself once a renewal (a later expiry) is recorded.
+  CLIENT_LICENCE_EXPIRING: sql`
+    SELECT l.id::text AS "entityId", l.client_id AS "clientId", NULL::uuid AS "shipmentId",
+           CASE WHEN l.expiry_date < ${today} THEN 'Licence expired: ' ELSE 'Licence expiring: ' END
+             || l.ref_no || ' (' || c.code || ')' AS subject,
+           l.type || ' expires ' || ${d(sql`l.expiry_date`)}
+             || '. Renew it and add the new one under Client Details → Licences & Documents.' AS notes,
+           to_char(l.expiry_date, 'YYYY-MM-DD') AS "dueDate", NULL::uuid AS "assigneeId"
+    FROM client_licences l JOIN clients c ON c.id = l.client_id
+    WHERE c.deleted_at IS NULL AND c.status <> 'INACTIVE' AND l.expiry_date IS NOT NULL
+      AND l.expiry_date <= ${today} + ${LICENCE_WARN_DAYS}::int
+      AND NOT EXISTS (
+        SELECT 1 FROM client_licences n
+        WHERE n.client_id = l.client_id AND n.type = l.type AND n.id <> l.id
+          AND n.expiry_date > l.expiry_date)`,
 };
 
 /** Due at 17:00 Phnom Penh time on the given date (as follow-ups added by hand default to). */

@@ -44,9 +44,11 @@ import { downloadFile } from '../../lib/files';
 import { printInPlace } from '../../lib/printInPlace';
 import { formResolver } from '../../lib/zodForm';
 import { AddNewSelect } from './AddNewSelect';
-import { InvoicesSection, ItemsSection, ITEMS_ANCHOR } from './CargoSection';
+import { InvoicesSection, ITEMS_ANCHOR } from './CargoSection';
+import { ItemsSection } from './ItemsSection';
 import { DeclarationsSection } from './DeclarationsSection';
 import { DocumentsTab } from './DocumentsTab';
+import { AuditTab, QueriesTab } from './HistoryQueriesTabs';
 import { PermitSetCard } from './PermitSetCard';
 import { PartiesSection } from './PartiesSection';
 import { stagesOf, Tracker, type Stage, type StageKey } from './Tracker';
@@ -59,10 +61,23 @@ import {
 } from './formModel';
 import f from './ShipmentForm.module.css';
 
+type TabKeyName =
+  | 'header'
+  | 'parties'
+  | 'transport'
+  | 'invoice'
+  | 'items'
+  | 'payments'
+  | 'documents'
+  | 'audit'
+  | 'queries';
+
 interface Step {
-  /** The workflow stage this tab is for; General has none. */
-  stage?: StageKey;
+  key: TabKeyName;
+  /** The workflow stages whose fields are in this tab (the tracker opens it for them). */
+  stages: StageKey[];
   label: string;
+  km: string;
   /** Top-level form fields shown in this tab (used to jump to the first error). */
   fields: (keyof FormValues)[];
   render: () => ReactNode;
@@ -232,9 +247,11 @@ function ShipmentForm({
       'declarations',
     ],
   });
-  // "?tab=documents" (from the list's row menu) opens the last tab, Documents.
+  // "?tab=documents" (from the list's row menu) opens the Reference Documents tab.
   const [search] = useSearchParams();
-  const [step, setStep] = useState(() => (search.get('tab') === 'documents' ? 99 : 0));
+  const [step, setStep] = useState(() =>
+    search.get('tab') === 'documents' ? tabIndex('documents') : 0,
+  );
   const [violations, setViolations] = useState<OverImportViolation[] | null>(null);
   const readOnly = !can('shipments:write');
   const clientLocked = !!detail && detail.declarations.some((d) => d.hasLedgerEntry);
@@ -282,10 +299,11 @@ function ShipmentForm({
     setValue('consigneeId', own?.id ?? '', { shouldDirty: !!detail });
   }, [clientId, direction, detail, lookups.clients, lookups.consignees, methods, setValue]);
 
-  // Which invoice the items list shows; "Enter items →" opens it and scrolls down to it.
+  // Which invoice the items list shows; "Enter items →" opens it on the Items tab.
   const [cargoInvoice, setCargoInvoice] = useState(0);
   const openItems = (gi: number) => {
     setCargoInvoice(gi);
+    setStep(tabIndex('items'));
     requestAnimationFrame(() =>
       document.getElementById(ITEMS_ANCHOR)?.scrollIntoView({ behavior: 'smooth', block: 'start' }),
     );
@@ -296,61 +314,159 @@ function ShipmentForm({
   const stages = stagesOf(values);
   const assignee = lookups.staff.find((u) => u.id === values.assignedToId);
 
-  // Client, Import / Export, freight mode and terms: the first thing on the General tab.
+  // The Header tab, laid out like the NSW application forms: on the left the few choices that
+  // start a plan; on the right its reference numbers, filled in automatically from the other
+  // tabs as the shipment goes on (read-only here).
+  const isImp = direction === 'IMPORT';
+  const declared = (values.declarations ?? []).find((d) => d?.declareNo?.trim());
+  const invoiceNos = (values.invoices ?? [])
+    .map((i) => i?.invoiceNo?.trim())
+    .filter(Boolean)
+    .join(', ');
+  const auto = (label: string, value: ReactNode, from?: TabKeyName) => (
+    <div className="form-field-group">
+      <label>{label}</label>
+      <div
+        className={f.roBox}
+        title={from ? `Filled in automatically from the ${TAB_LABEL[from].en} tab` : undefined}
+      >
+        {value || '—'}
+      </div>
+    </div>
+  );
   const setup = (
     <div className="cx-card">
-      <div className={f.setupClient}>
-        <div className={f.setupField}>
-          <label className={f.cap} htmlFor="f-clientId">
-            Client
-          </label>
-          <select
-            id="f-clientId"
-            className={`form-select-box ${f.clientSelect}`}
-            {...register('clientId')}
-            disabled={clientLocked}
-            title={
-              clientLocked
-                ? 'Locked: a declaration of this shipment is already in the ledger'
-                : undefined
-            }
-          >
-            {lookups.clients
-              .filter((c) => c.status !== 'INACTIVE' || c.id === detail?.clientId)
-              .map((c) => (
-                <option key={c.id} value={c.id}>
-                  {c.name}
+      <div className={f.nswCols}>
+        <FormSection title="Shipment Information" icon={icons.plans({})}>
+          <div className="form-field-group">
+            <label htmlFor="f-direction">Shipment Type</label>
+            <select
+              id="f-direction"
+              className="form-select-box"
+              {...register('direction', { onChange: () => setStep(0) })}
+            >
+              <option value="IMPORT">IMP – Import</option>
+              <option value="EXPORT">EXP – Export</option>
+            </select>
+          </div>
+          <div className="form-field-group">
+            <label htmlFor="f-clientId">Client</label>
+            <select
+              id="f-clientId"
+              className="form-select-box"
+              {...register('clientId')}
+              disabled={clientLocked}
+              title={
+                clientLocked
+                  ? 'Locked: a declaration of this shipment is already in the ledger'
+                  : undefined
+              }
+            >
+              {lookups.clients
+                .filter((c) => c.status !== 'INACTIVE' || c.id === detail?.clientId)
+                .map((c) => (
+                  <option key={c.id} value={c.id}>
+                    {c.name}
+                  </option>
+                ))}
+            </select>
+          </div>
+          <div className={f.grid} style={{ '--cols': 2 } as CSSProperties}>
+            <div className="form-field-group">
+              <label htmlFor="f-transportMode">Freight</label>
+              <select
+                id="f-transportMode"
+                className="form-select-box"
+                {...register('transportMode', { onChange: changeMode })}
+              >
+                {FREIGHT.map((o) => (
+                  <option key={o.value} value={o.value}>
+                    {o.label}
+                  </option>
+                ))}
+              </select>
+            </div>
+            <div className="form-field-group">
+              <label htmlFor="f-loadType">Terms</label>
+              <select
+                id="f-loadType"
+                className="form-select-box"
+                {...register('loadType')}
+                disabled={transportMode === 'AIR'}
+              >
+                {/* Air has no terms (stored as NONE). */}
+                <option value="NONE" hidden>
+                  N/A (Air)
                 </option>
-              ))}
-          </select>
-        </div>
-        <div className={f.setupField}>
-          <label className={f.cap} htmlFor="f-assignedToId">
-            Assigned Staff
-          </label>
-          <select id="f-assignedToId" className="form-select-box" {...register('assignedToId')}>
-            <option value="">Not assigned</option>
-            {lookups.staff.map((u) => (
-              <option key={u.id} value={u.id}>
-                {u.name}
-              </option>
-            ))}
-          </select>
-        </div>
-        <label className={f.checkRow}>
-          <input type="checkbox" {...register('isUrgent')} />
-          Urgent
-        </label>
-      </div>
-      <div className={f.setupChoices}>
-        <DirectionTiles onChange={() => setStep(0)} />
-        <Segmented name="transportMode" label="Freight" options={FREIGHT} onChange={changeMode} />
-        <Segmented
-          name="loadType"
-          label="Terms"
-          options={TERMS}
-          disabled={transportMode === 'AIR'}
-        />
+                {TERMS.map((o) => (
+                  <option key={o.value} value={o.value}>
+                    {o.label}
+                  </option>
+                ))}
+              </select>
+            </div>
+          </div>
+          <div className={f.grid} style={{ '--cols': 2 } as CSSProperties}>
+            <div className="form-field-group">
+              <label htmlFor="f-assignedToId">Assigned Staff</label>
+              <select
+                id="f-assignedToId"
+                className="form-select-box"
+                {...register('assignedToId')}
+              >
+                <option value="">Not assigned</option>
+                {lookups.staff.map((u) => (
+                  <option key={u.id} value={u.id}>
+                    {u.name}
+                  </option>
+                ))}
+              </select>
+            </div>
+            <div className="form-field-group">
+              <label htmlFor="f-isUrgent">Priority</label>
+              <label className={f.checkRow}>
+                <input id="f-isUrgent" type="checkbox" {...register('isUrgent')} />
+                Urgent
+              </label>
+            </div>
+          </div>
+        </FormSection>
+
+        <FormSection title="Reference Information" icon={icons.documents({})}>
+          <div className={f.grid} style={{ '--cols': 2 } as CSSProperties}>
+            {auto('Reference No.', detail?.reference ?? 'Assigned when created')}
+            {auto(
+              'Last Updated',
+              detail &&
+                new Date(detail.updatedAt).toLocaleString('en-GB', {
+                  timeZone: 'Asia/Phnom_Penh',
+                  day: '2-digit',
+                  month: 'short',
+                  year: 'numeric',
+                  hour: '2-digit',
+                  minute: '2-digit',
+                }),
+            )}
+            {auto('Declare No.', declared?.declareNo, 'payments')}
+            {auto(
+              'Declare Date',
+              declared?.declareDate ? fmtDate(declared.declareDate) : '',
+              'payments',
+            )}
+            {auto('Invoice No.', invoiceNos, 'invoice')}
+            {isImp
+              ? auto(MODE[transportMode].bl, values.hblNo, 'transport')
+              : auto('Booking / SO No.', values.bookingNo, 'transport')}
+            {isImp
+              ? auto('Permit No.', values.permitNo, 'payments')
+              : auto('CO Number', values.coNumber, 'payments')}
+            {isImp
+              ? auto(MODE[transportMode].eta, values.eta ? fmtDate(values.eta) : '', 'transport')
+              : auto('ETD', values.etd ? fmtDate(values.etd) : '', 'transport')}
+            <ShipmentStatusField />
+            <ClearanceStatusField />
+          </div>
+        </FormSection>
       </div>
     </div>
   );
@@ -365,13 +481,17 @@ function ShipmentForm({
   });
   const current = Math.min(step, steps.length - 1);
   const isLast = current === steps.length - 1;
-  const tabOf = (key: StageKey) => steps.findIndex((s) => s.stage === key);
+  /** The tab holding a workflow stage's fields. */
+  const tabOf = (key: StageKey) => steps.findIndex((s) => s.stages.includes(key));
 
   const onInvalid = (errs: FieldErrors<FormValues>) => {
     const keys = Object.keys(errs) as (keyof FormValues)[];
-    const target = steps.findIndex((s) => s.fields.some((k) => keys.includes(k)));
-    // Errors on invoice items: show the first invoice with one.
     const inv = invoiceErrorsOf(errs);
+    // Errors only on invoice items: the Items tab, showing the first invoice with one.
+    const itemsOnly = inv.lines && !inv.head && keys.every((k) => k === 'invoices');
+    const target = itemsOnly
+      ? tabIndex('items')
+      : steps.findIndex((s) => s.fields.some((k) => keys.includes(k)));
     if (inv.lines && !inv.head) setCargoInvoice(inv.firstLines);
     if (target >= 0) setStep(target);
     toast(`Check ${keys.length} highlighted field${keys.length === 1 ? '' : 's'} before saving.`);
@@ -393,9 +513,8 @@ function ShipmentForm({
         (e.details as { rule?: string } | undefined)?.rule === 'CUT_STOCK_OVER_IMPORT'
       ) {
         setViolations((e.details as { violations: OverImportViolation[] }).violations);
-        // The Invoice / PL tab, where the quantities and override reasons are entered.
-        const itemsTab = tabOf('invpl');
-        if (itemsTab >= 0) setStep(itemsTab);
+        // The Items tab, where the quantities and override reasons are entered.
+        setStep(tabIndex('items'));
       }
       return false;
     }
@@ -434,7 +553,7 @@ function ShipmentForm({
     : isDirty
       ? 'Save your changes first'
       : detail.invoices.length === 0
-        ? 'Add the cargo invoices first (Invoice / PL tab)'
+        ? 'Add the cargo invoices first (Invoice tab)'
         : null;
   /**
    * JR's "INV + PL" workbook: the commercial invoice and packing list side by side; for an
@@ -577,7 +696,7 @@ function ShipmentForm({
             <div className={f.stack}>
               <Tracker
                 stages={stages}
-                open={steps[current]!.stage}
+                open={steps[current]!.stages[0]}
                 onOpen={(key) => setStep(Math.max(0, tabOf(key)))}
               />
               {shipStatus === 'COMPLETED' && clearStatus !== 'CLEARED' && (
@@ -594,16 +713,21 @@ function ShipmentForm({
                 </div>
               )}
 
-              {/* ---------- Tabs: General, then one per workflow stage ---------- */}
+              {/* ---------- Tabs: as on the customs declaration ---------- */}
               <div className={f.tabs} role="tablist" aria-label="Shipment sections">
                 {steps.map((s, i) => {
-                  const done = !!s.stage && !!stages.find((x) => x.key === s.stage)?.done;
-                  const hasError = s.fields.some((k) => k in errors);
+                  // Done once every workflow stage in the tab is done.
+                  const done =
+                    s.stages.length > 0 &&
+                    s.stages.every((k) => stages.find((x) => x.key === k)?.done);
+                  const hasError =
+                    s.fields.some((k) => k in errors) ||
+                    (s.key === 'items' && invoiceErrorsOf(errors).lines);
                   return (
                     <button
                       type="button"
                       role="tab"
-                      key={s.label}
+                      key={s.key}
                       className={f.tab}
                       aria-selected={i === current}
                       data-done={done}
@@ -613,7 +737,10 @@ function ShipmentForm({
                       <span className={f.tabIcon} aria-hidden="true">
                         {hasError ? '!' : done ? '✓' : ''}
                       </span>
-                      {s.label}
+                      <span className={f.tabText}>
+                        <span className={f.tabKm}>{s.km}</span>
+                        <span className={f.tabEn}>{s.label}</span>
+                      </span>
                     </button>
                   );
                 })}
@@ -655,7 +782,9 @@ function ShipmentForm({
             <div className={f.progress}>
               <span>
                 Tab <strong>{current + 1}</strong> of {steps.length} ·{' '}
-                <strong>{steps[current]!.label}</strong>
+                <strong>
+                  {steps[current]!.km} / {steps[current]!.label}
+                </strong>
               </span>
               {isDirty && !readOnly && <span className={f.dirty}>Unsaved changes</span>}
             </div>
@@ -817,10 +946,21 @@ function AuthorizeCard({
 }
 
 /** One titled column of a form, with a rule under the title (as on the NSW forms). */
-function FormSection({ title, children }: { title: string; children: ReactNode }) {
+function FormSection({
+  title,
+  icon,
+  children,
+}: {
+  title: string;
+  icon?: ReactNode;
+  children: ReactNode;
+}) {
   return (
     <section className={f.formSection}>
-      <h4 className={f.formSectionTitle}>{title}</h4>
+      <h4 className={f.formSectionTitle}>
+        {icon}
+        {title}
+      </h4>
       {children}
     </section>
   );
@@ -871,61 +1011,6 @@ function PodField() {
 type Span = number | 'full';
 const spanStyle = (span?: Span): CSSProperties | undefined =>
   span === 'full' ? { gridColumn: '1 / -1' } : span ? { gridColumn: `span ${span}` } : undefined;
-
-/** Export / Import as two large tiles, so the shipment type can't be mistaken for the client. */
-function DirectionTiles({ onChange }: { onChange: () => void }) {
-  const { register } = useFormContext<FormValues>();
-  return (
-    <fieldset className={f.setupField}>
-      <legend className={f.cap} style={{ marginBottom: 8 }}>
-        Shipment type
-      </legend>
-      <div className={f.typeTiles}>
-        {DIRECTIONS.map((o) => (
-          <label key={o.value} className={f.typeTile}>
-            <input type="radio" value={o.value} {...register('direction', { onChange })} />
-            <span>
-              <i aria-hidden="true">{o.icon}</i>
-              <b>{o.label}</b>
-              <small>{o.sub}</small>
-            </span>
-          </label>
-        ))}
-      </div>
-    </fieldset>
-  );
-}
-
-function Segmented({
-  name,
-  label,
-  options,
-  disabled,
-  onChange,
-}: {
-  name: 'direction' | 'transportMode' | 'loadType';
-  label: string;
-  options: { value: string; label: string }[];
-  disabled?: boolean;
-  onChange?: () => void;
-}) {
-  const { register } = useFormContext<FormValues>();
-  return (
-    <fieldset className={f.setupField} disabled={disabled}>
-      <legend className={f.cap} style={{ marginBottom: 8 }}>
-        {label}
-      </legend>
-      <div className={f.segmented}>
-        {options.map((o) => (
-          <label key={o.value} className={f.segOpt}>
-            <input type="radio" value={o.value} {...register(name, { onChange })} />
-            <span>{o.label}</span>
-          </label>
-        ))}
-      </div>
-    </fieldset>
-  );
-}
 
 function Field({
   name,
@@ -1268,7 +1353,37 @@ interface TabContext {
   saveNow: () => Promise<boolean>;
 }
 
-/** General first, then one tab per workflow stage, in the tracker's order. */
+/** The nine tabs, as on the customs declaration; always in this order. */
+const TAB_KEYS: readonly TabKeyName[] = [
+  'header',
+  'parties',
+  'transport',
+  'invoice',
+  'items',
+  'payments',
+  'documents',
+  'audit',
+  'queries',
+];
+type TabKey = TabKeyName;
+const tabIndex = (k: TabKey) => TAB_KEYS.indexOf(k);
+
+const TAB_LABEL: Record<TabKey, { km: string; en: string }> = {
+  header: { km: 'បឋមកថា', en: 'Header' },
+  parties: { km: 'ភាគី', en: 'Parties' },
+  transport: { km: 'ការដឹកជញ្ជូន', en: 'Transport' },
+  invoice: { km: 'វិក្កយបត្រ', en: 'Invoice' },
+  items: { km: 'មុខទំនិញ', en: 'Items' },
+  payments: { km: 'ការទូទាត់និងផ្សេងទៀត', en: 'Payments & Other' },
+  documents: { km: 'ឯកសារយោង', en: 'Reference Documents' },
+  audit: { km: 'សវនកម្ម', en: 'Audit' },
+  queries: { km: 'សំណួរ', en: 'Queries' },
+};
+
+/**
+ * The customs-declaration tabs. Every field of the workflow stages lives in one of them; the
+ * tracker still follows the workflow, and a stage opens the tab that holds its fields.
+ */
 function buildSteps(
   direction: FormValues['direction'],
   transportMode: Mode,
@@ -1280,156 +1395,85 @@ function buildSteps(
   const m = MODE[transportMode];
   const isImport = direction === 'IMPORT';
   const ports = portsFor(lookups, transportMode, detail?.clearancePortId);
-  const units = lookups.values.QUANTITY_UNIT.map((v) => ({ value: v.value, label: v.label }));
-  const materials = lookups.values.MATERIAL.map((v) => ({ value: v.value, label: v.label }));
   const coForms = lookups.values.CO_FORM.map((v) => ({ value: v.value, label: v.label }));
+  const has = (k: StageKey) => stages.some((s) => s.key === k);
+  /** Only the stages this shipment's workflow has (e.g. no Container & Seal for air). */
+  const only = (...keys: StageKey[]) => keys.filter(has);
 
-  const general: Step = {
-    label: 'General',
+  const header: Omit<Step, 'key' | 'label' | 'km'> = {
+    stages: [],
+    fields: ['clientId', 'direction', 'transportMode', 'loadType', 'assignedToId', 'isUrgent'],
+    render: () => ctx.setup,
+  };
+
+  const parties: Omit<Step, 'key' | 'label' | 'km'> = {
+    stages: [],
     fields: isImport
-      ? [
-          'clientId',
-          'loadType',
-          'assignedToId',
-          'isUrgent',
-          'shipperName',
-          'consigneeId',
-          'originCountryIso2',
-          'forwarderId',
-          'broker',
-          'quantity',
-          'quantityUnit',
-          'remark',
-        ]
-      : [
-          'clientId',
-          'loadType',
-          'assignedToId',
-          'isUrgent',
-          'consigneeId',
-          'destinationCountryIso2',
-          'forwarderId',
-          'quantity',
-          'quantityUnit',
-          'material',
-          'remark',
-        ],
+      ? ['shipperName', 'consigneeId', 'originCountryIso2', 'forwarderId', 'broker']
+      : ['consigneeId', 'destinationCountryIso2', 'forwarderId'],
     render: () => (
       <>
-        {ctx.setup}
-        <PartiesSection lookups={lookups} />
-        {isImport ? (
-          <Card title="Agents & Cargo">
-            <ForwarderField lookups={lookups} />
-            <Field name="broker" label="Broker" span={2} placeholder="Customs broker" />
-            <Field name="quantity" label="Quantity" placeholder="0" decimals={3} />
-            <Select name="quantityUnit" label="Unit" options={units} placeholder="Select unit" />
-          </Card>
-        ) : (
-          <Card title="Forwarder & Cargo">
-            <ForwarderField lookups={lookups} />
-            <Field name="quantity" label="Quantity" placeholder="0" decimals={3} />
-            <Select name="quantityUnit" label="Unit" options={units} placeholder="Select unit" />
-            <Select
-              name="material"
-              label="Material"
-              options={materials}
-              placeholder="Select material"
-              span={2}
-            />
-          </Card>
-        )}
-        <Card title="Remark" cols={1}>
-          <Field name="remark" label="Remark" span="full" placeholder="Optional note" />
-        </Card>
+        <PartiesSection lookups={lookups}>
+          <div className={f.partiesAgents}>
+            <FormSection title="Agents" icon={icons.operations({})}>
+              <div className={f.grid} style={{ '--cols': 4 } as CSSProperties}>
+                <ForwarderField lookups={lookups} />
+                {isImport && (
+                  <Field name="broker" label="Broker" span={2} placeholder="Customs broker" />
+                )}
+              </div>
+            </FormSection>
+          </div>
+        </PartiesSection>
       </>
     ),
   };
 
-  type Content = Omit<Step, 'label' | 'stage'>;
-  const invpl: Content = {
-    fields: ['invoices'],
-    render: () => (
-      <>
-        <InvoicesSection
-          shipmentId={detail?.id}
-          active={ctx.cargoInvoice}
-          onOpenItems={ctx.openItems}
-        />
-        <ItemsSection active={ctx.cargoInvoice} onActive={ctx.setCargoInvoice} />
-        {/* Imports: the set handed in to apply for the import permit. */}
-        {isImport && <PermitSetCard shipmentId={detail?.id} saveNow={ctx.saveNow} />}
-      </>
-    ),
-  };
-  const charge: Content = {
-    fields: ['thcHblNo', 'thcHblDate', 'thcHblAmount'],
-    render: () => (
-      <Card title="Invoice Charge">
-        <Field name="thcHblNo" label="Invoice / THC No." span={2} />
-        <Field name="thcHblDate" label="Invoice / THC Date" type="date" />
-        <Field name="thcHblAmount" label="Amount (USD)" placeholder="0.00" decimals={2} />
-      </Card>
-    ),
-  };
-  const clearance: Content = {
-    fields: ['declarations'],
-    render: () => (
-      <>
-        <DeclarationsSection ports={lookups.ports} original={detail} />
-        <Card title="Status" cols={2}>
-          <ShipmentStatusField />
-          <ClearanceStatusField />
-        </Card>
-      </>
-    ),
-  };
-
-  const content: Partial<Record<StageKey, Content>> = isImport
+  const transport: Omit<Step, 'key' | 'label' | 'km'> = isImport
     ? {
-        hbl: {
-          fields: ['hblNo', 'vesselName', 'voyageNo', 'clearancePortId', 'coNumber', 'containers'],
-          render: () => (
-            <>
-              <Card title={`${m.noun} & House Bill`}>
-                <Field name="hblNo" label={m.bl} span={2} />
-                <Select
-                  name="clearancePortId"
-                  label={m.port}
-                  options={ports}
-                  placeholder="Select"
-                  span={2}
-                />
-                <Field name="vesselName" label={m.carrier} span={2} />
-                <Field name="voyageNo" label={m.trip} />
-                <Field name="coNumber" label="CO Number" />
-              </Card>
-              <ContainersCard />
-            </>
-          ),
-        },
-        invpl,
-        permit: {
-          fields: ['permitStatus', 'permitNo', 'permitDate'],
-          render: () => (
-            <Card title="Permit" cols={2}>
-              <PermitStatusPicker />
-              <Field name="permitNo" label="Permit No." />
-              <Field name="permitDate" label="Permit Date" type="date" />
+        stages: only('hbl', 'release', 'delivery'),
+        fields: [
+          'hblNo',
+          'vesselName',
+          'voyageNo',
+          'clearancePortId',
+          'coNumber',
+          'containers',
+          'eta',
+          'thcHblNo',
+          'thcHblDate',
+          'thcHblAmount',
+          'doDate',
+          'truckNo',
+          'driverName',
+          'driverPhone',
+          'arriveFty',
+          'podReceived',
+        ],
+        render: () => (
+          <>
+            <Card title={`ព័ត៌មានលម្អិតពីមធ្យោបាយដឹកជញ្ជូន / ${m.noun} & House Bill`}>
+              <Field name="hblNo" label={m.bl} span={2} />
+              <Select
+                name="clearancePortId"
+                label={m.port}
+                options={ports}
+                placeholder="Select"
+                span={2}
+              />
+              <Field name="vesselName" label={m.carrier} span={2} />
+              <Field name="voyageNo" label={m.trip} />
+              <Field name="coNumber" label="CO Number" />
             </Card>
-          ),
-        },
-        // Released together by the forwarder, so entered in one form.
-        // The arrival notice only matters for its ETA (unstuffing is 2 working days later);
-        // then the forwarder's THC invoice and the DO date.
-        release: {
-          fields: ['eta', 'thcHblNo', 'thcHblDate', 'thcHblAmount', 'doDate'],
-          render: () => (
+            <ContainersCard />
+            {/* Released together by the forwarder, so entered in one form. The arrival notice
+                only matters for its ETA (unstuffing is 2 working days later); then the
+                forwarder's THC invoice and the DO date. */}
             <div className="cx-card">
               <div className="cx-card-head">
                 <div className="cx-title">
                   <div>
-                    <h3>Arrival &amp; DO</h3>
+                    <h3>ការមកដល់ និង DO / Arrival &amp; DO</h3>
                   </div>
                 </div>
               </div>
@@ -1448,17 +1492,7 @@ function buildSteps(
                 </FormSection>
               </div>
             </div>
-          ),
-        },
-        authorize: {
-          fields: ['authorizeNo', 'authorizeDate'],
-          render: () => <AuthorizeCard shipmentId={detail?.id} saveNow={ctx.saveNow} />,
-        },
-        clearance,
-        delivery: {
-          fields: ['truckNo', 'driverName', 'driverPhone', 'arriveFty', 'podReceived'],
-          render: () => (
-            <Card title="Delivery">
+            <Card title="ការដឹកជញ្ជូនទៅរោងចក្រ / Delivery">
               <Field name="truckNo" label="Truck Plate No." placeholder="e.g. 3A-2291" />
               <Field name="driverName" label="Driver" />
               <Field name="driverPhone" label="Driver Phone" placeholder="012 345 678" />
@@ -1466,14 +1500,26 @@ function buildSteps(
               <PodField />
               <ShipmentStatusField />
             </Card>
-          ),
-        },
+          </>
+        ),
       }
     : {
-        booking: {
-          fields: ['bookingNo', 'crd', 'cutOffAt', 'etd', 'clearancePortId'],
-          render: () => (
-            <Card title="Booking">
+        stages: only('booking', 'container', 'departure', 'bl'),
+        fields: [
+          'bookingNo',
+          'crd',
+          'cutOffAt',
+          'etd',
+          'clearancePortId',
+          'containers',
+          'vesselName',
+          'voyageNo',
+          'atd',
+          'hblNo',
+        ],
+        render: () => (
+          <>
+            <Card title="ការកក់ / Booking">
               <Field name="bookingNo" label="Booking / SO No." span={2} />
               <Field name="crd" label="CRD (Cargo Ready)" type="date" />
               <Field name="etd" label="ETD" type="date" />
@@ -1489,51 +1535,147 @@ function buildSteps(
                 span={2}
               />
             </Card>
-          ),
-        },
-        invpl,
-        container: { fields: ['containers'], render: () => <ContainersCard /> },
-        clearance,
-        departure: {
-          fields: ['vesselName', 'voyageNo', 'atd'],
-          render: () => (
-            <Card title="Departure">
+            {has('container') && <ContainersCard />}
+            <Card title="ការចេញដំណើរ / Departure">
               <Field name="vesselName" label={m.carrier} span={2} />
               <Field name="voyageNo" label={m.trip} />
               <Field name="atd" label="ATD (Actual Departure)" type="date" />
             </Card>
-          ),
-        },
-        bl: {
-          fields: ['hblNo'],
-          render: () => (
-            <Card title={m.bl.replace(' No.', ' Release')} cols={2}>
+            <Card title={`លេខអង្គាតប័ណ្ណ / ${m.bl.replace(' No.', ' Release')}`} cols={2}>
               <Field name="hblNo" label={m.bl} />
             </Card>
-          ),
-        },
-        charge,
-        co: {
-          fields: ['coForm', 'coNumber', 'coStatus'],
-          render: () => (
-            <Card title="Certificate of Origin">
+          </>
+        ),
+      };
+
+  const invoice: Omit<Step, 'key' | 'label' | 'km'> = {
+    stages: isImport ? only('invpl') : only('invpl', 'charge'),
+    fields: [
+      'invoices',
+      'incoterm',
+      'blDate',
+      'currency',
+      'exchangeRate',
+      ...(isImport ? [] : (['thcHblNo', 'thcHblDate', 'thcHblAmount'] as const)),
+    ],
+    render: () => (
+      <>
+        <InvoicesSection
+          shipmentId={detail?.id}
+          active={ctx.cargoInvoice}
+          onOpenItems={ctx.openItems}
+        />
+        {!isImport && (
+          <Card title="Invoice Charge">
+            <Field name="thcHblNo" label="Invoice / THC No." span={2} />
+            <Field name="thcHblDate" label="Invoice / THC Date" type="date" />
+            <Field name="thcHblAmount" label="Amount (USD)" placeholder="0.00" decimals={2} />
+          </Card>
+        )}
+      </>
+    ),
+  };
+
+  const items: Omit<Step, 'key' | 'label' | 'km'> = {
+    stages: only('invpl'),
+    // Item errors are routed here by onInvalid (they sit under `invoices`).
+    fields: [],
+    render: () => <ItemsSection active={ctx.cargoInvoice} onActive={ctx.setCargoInvoice} />,
+  };
+
+  const units = lookups.values.QUANTITY_UNIT.map((v) => ({ value: v.value, label: v.label }));
+  const materials = lookups.values.MATERIAL.map((v) => ({ value: v.value, label: v.label }));
+  /** Customs declarations, cargo and remark: shown under the permit / CO cards. */
+  const other = (
+    <>
+      <DeclarationsSection ports={lookups.ports} original={detail} />
+      <Card title="Cargo & Remark">
+        <Field name="quantity" label="Quantity" placeholder="0" decimals={3} />
+        <Select name="quantityUnit" label="Unit" options={units} placeholder="Select unit" />
+        {!isImport && (
+          <Select
+            name="material"
+            label="Material"
+            options={materials}
+            placeholder="Select material"
+            span={2}
+          />
+        )}
+        <Field name="remark" label="Remark" span="full" placeholder="Optional note" />
+      </Card>
+    </>
+  );
+  const otherFields: (keyof FormValues)[] = [
+    'declarations',
+    'quantity',
+    'quantityUnit',
+    'material',
+    'remark',
+  ];
+
+  const payments: Omit<Step, 'key' | 'label' | 'km'> = isImport
+    ? {
+        stages: only('permit', 'authorize', 'clearance'),
+        fields: [
+          'permitStatus',
+          'permitNo',
+          'permitDate',
+          'authorizeNo',
+          'authorizeDate',
+          ...otherFields,
+        ],
+        render: () => (
+          <>
+            <Card title="លិខិតអនុញ្ញាត / Permit" cols={2}>
+              <PermitStatusPicker />
+              <Field name="permitNo" label="Permit No." />
+              <Field name="permitDate" label="Permit Date" type="date" />
+            </Card>
+            {/* The set handed in to apply for the import permit. */}
+            <PermitSetCard shipmentId={detail?.id} saveNow={ctx.saveNow} />
+            <AuthorizeCard shipmentId={detail?.id} saveNow={ctx.saveNow} />
+            {other}
+          </>
+        ),
+      }
+    : {
+        stages: only('co', 'clearance'),
+        fields: ['coForm', 'coNumber', 'coStatus', ...otherFields],
+        render: () => (
+          <>
+            <Card title="វិញ្ញាបនបត្របញ្ជាក់ប្រភពដើម / Certificate of Origin">
               <Select name="coForm" label="CO Form" options={coForms} placeholder="Select form" />
               <Field name="coNumber" label="CO Number" span={2} />
               <CoStatusSelect />
             </Card>
-          ),
-        },
+            {other}
+          </>
+        ),
       };
 
-  // Every shipment ends with its documents, whatever its workflow.
-  const documents: Step = {
-    label: 'Documents',
-    fields: [],
-    render: () => <DocumentsTab shipmentId={detail?.id} reference={detail?.reference} />,
+  const content: Record<TabKey, Omit<Step, 'key' | 'label' | 'km'>> = {
+    header,
+    parties,
+    transport,
+    invoice,
+    items,
+    payments,
+    documents: {
+      stages: [],
+      fields: [],
+      render: () => <DocumentsTab shipmentId={detail?.id} reference={detail?.reference} />,
+    },
+    audit: { stages: [], fields: [], render: () => <AuditTab shipmentId={detail?.id} /> },
+    queries: {
+      stages: [],
+      fields: [],
+      render: () => <QueriesTab shipmentId={detail?.id} clientId={detail?.clientId} />,
+    },
   };
-  return [
-    general,
-    ...stages.map((st) => ({ stage: st.key, label: st.label, ...content[st.key]! })),
-    documents,
-  ];
+  return TAB_KEYS.map((key) => ({
+    key,
+    label: TAB_LABEL[key].en,
+    km: TAB_LABEL[key].km,
+    ...content[key],
+  }));
 }

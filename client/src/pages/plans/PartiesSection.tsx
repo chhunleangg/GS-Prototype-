@@ -5,6 +5,7 @@ import type { ClientDetail, LookupsResponse } from '@gs/shared';
 import { useAuth } from '../../auth/AuthProvider';
 import { useAddConsignee, useClient } from '../../features/hooks';
 import { FieldError } from '../../components/ui';
+import { icons } from '../../layout/icons';
 import { AddNewSelect } from './AddNewSelect';
 import type { FormValues } from './formModel';
 import f from './ShipmentForm.module.css';
@@ -14,7 +15,14 @@ import f from './ShipmentForm.module.css';
  * The client is one of the two: the shipper on an export, the consignee on an import. Its
  * card is filled from the client profile (grey, read-only); the other party is chosen here.
  */
-export function PartiesSection({ lookups }: { lookups: LookupsResponse }) {
+export function PartiesSection({
+  lookups,
+  children,
+}: {
+  lookups: LookupsResponse;
+  /** Shown under the two parties, across the card (the agents). */
+  children?: ReactNode;
+}) {
   const { control } = useFormContext<FormValues>();
   const { can } = useAuth();
   const [direction, clientId] = useWatch({ control, name: ['direction', 'clientId'] });
@@ -24,7 +32,7 @@ export function PartiesSection({ lookups }: { lookups: LookupsResponse }) {
   const isImport = direction === 'IMPORT';
   const clientCard = (
     <ClientPartyCard
-      title={isImport ? 'Consignee' : 'Shipper'}
+      title={isImport ? 'Importer' : 'Exporter'}
       client={client}
       fallbackName={fallback?.legalName || fallback?.name || ''}
       clientId={clientId}
@@ -33,9 +41,12 @@ export function PartiesSection({ lookups }: { lookups: LookupsResponse }) {
     />
   );
   return (
-    <div className={f.parties}>
-      {isImport ? <ShipperCard client={client} lookups={lookups} /> : clientCard}
-      {isImport ? clientCard : <ConsigneeCard client={client} lookups={lookups} />}
+    <div className="cx-card">
+      <div className={f.parties}>
+        {isImport ? <ShipperCard client={client} lookups={lookups} /> : clientCard}
+        {isImport ? clientCard : <ConsigneeCard client={client} lookups={lookups} />}
+      </div>
+      {children}
     </div>
   );
 }
@@ -54,16 +65,17 @@ function PartyCard({
   children: ReactNode;
 }) {
   return (
-    <div className={`cx-card ${f.partyCard}`}>
-      <div className={f.partyHead}>
-        <h3>{title}</h3>
+    <section className={f.formSection}>
+      <h4 className={f.formSectionTitle}>
+        {icons.clients({})}
+        {title}
         <span className={f.partyTag} data-tone={tone}>
           {tag}
         </span>
-      </div>
+      </h4>
       <div className={f.partyGrid}>{children}</div>
       {foot && <p className={f.note}>{foot}</p>}
-    </div>
+    </section>
   );
 }
 
@@ -116,6 +128,8 @@ function ClientPartyCard({
     ? lookups.consignees.find((c) => c.id === consigneeId && c.clientId !== clientId)
     : undefined;
   const country = (consigneePick && chosen?.countryIso2) || client?.countryIso2;
+  // Customs checks these: an expired patent or QIP can hold up the declaration.
+  const expired = (client?.licences ?? []).filter((l) => l.state === 'EXPIRED' && !l.superseded);
   return (
     <PartyCard
       title={title}
@@ -123,9 +137,16 @@ function ClientPartyCard({
       tone="client"
       foot={
         clientId && (
-          <Link to={`/clients/${clientId}`} className="filter-mini-link">
-            Edit in Client Details
-          </Link>
+          <>
+            {expired.length > 0 && (
+              <span className={f.licenceWarn} role="alert">
+                Expired licence: {expired.map((l) => l.refNo).join(', ')}.{' '}
+              </span>
+            )}
+            <Link to={`/clients/${clientId}`} className="filter-mini-link">
+              Edit in Client Details
+            </Link>
+          </>
         )
       }
     >
@@ -149,6 +170,7 @@ function ClientPartyCard({
         />
       )}
       <ReadOnly label="VAT-TIN" value={client?.vattin} />
+      <ReadOnly label="CIN" value={client?.cin} />
       <ReadOnly label="Phone" value={client?.contactPhone} />
       <ReadOnly label="Email" value={client?.contactEmail} />
       <ReadOnly label="Country" value={countryName(lookups, country)} />
@@ -195,7 +217,7 @@ function ConsigneeCard({
   }, [consigneeId, picked, getValues, setValue]);
 
   return (
-    <PartyCard title="Consignee" tag="Buyer" tone="other">
+    <PartyCard title="Importer" tag="Buyer" tone="other">
       <div className="form-field-group" style={{ gridColumn: '1 / -1' }}>
         <label htmlFor="f-consigneeId">Name</label>
         <AddNewSelect
@@ -217,7 +239,10 @@ function ConsigneeCard({
         lookups={lookups}
         error={errors.destinationCountryIso2?.message}
       />
-      <ReadOnly label="Consignee Country" value={countryName(lookups, picked?.countryIso2)} />
+      <ReadOnly
+        label="Importer Country"
+        value={countryName(lookups, picked?.countryIso2)}
+      />
       <ReadOnly label="Address" value={address} wide />
     </PartyCard>
   );
@@ -242,7 +267,7 @@ function ShipperCard({
     (s) => s.name.trim().toLowerCase() === shipperName.trim().toLowerCase(),
   );
   return (
-    <PartyCard title="Shipper" tag="Supplier" tone="other">
+    <PartyCard title="Exporter" tag="Supplier" tone="other">
       <div className="form-field-group" style={{ gridColumn: '1 / -1' }}>
         <label htmlFor="f-shipperName">Name</label>
         <input

@@ -627,6 +627,43 @@ describe('shipments', () => {
     });
   });
 
+  it('lists its history (Audit tab) and its follow-ups (Queries tab)', async () => {
+    const h = await as('MANAGER');
+    const created = (await request(app).post('/api/v1/shipments').set(h).send(exportShipment()))
+      .body;
+    await request(app)
+      .put(`/api/v1/shipments/${created.id}`)
+      .set(h)
+      .send(exportShipment({ bookingNo: 'BKG-99999', atd: '2026-08-01' }))
+      .expect(200);
+    const hist = await request(app).get(`/api/v1/shipments/${created.id}/history`).set(h);
+    expect(hist.status).toBe(200);
+    expect(hist.body.map((e: { action: string }) => e.action)).toEqual(['UPDATE', 'CREATE']);
+    expect(hist.body[0].changed).toEqual(expect.arrayContaining(['bookingNo', 'atd']));
+    expect(hist.body[0].changed).not.toContain('hblNo');
+
+    const other = (
+      await request(app)
+        .post('/api/v1/shipments')
+        .set(h)
+        .send(exportShipment({ invoices: [{ invoiceNo: 'JRA26999', lines: [{ pcs: 1 }] }] }))
+    ).body;
+    for (const [shipmentId, subject] of [
+      [created.id, 'Customs asked for the PL again'],
+      [other.id, 'Another shipment'],
+    ])
+      await request(app)
+        .post('/api/v1/follow-ups')
+        .set(h)
+        .send({ subject, shipmentId, dueAt: '2026-12-01' })
+        .expect(201);
+    const q = await request(app).get('/api/v1/follow-ups').query({ shipmentId: created.id }).set(h);
+    expect(q.status).toBe(200);
+    expect(q.body.data.map((r: { subject: string }) => r.subject)).toEqual([
+      'Customs asked for the PL again',
+    ]);
+  });
+
   it('protects declarations that have ledger entries', async () => {
     const h = await as('ADMIN');
     const created = (await request(app).post('/api/v1/shipments').set(h).send(exportShipment()))

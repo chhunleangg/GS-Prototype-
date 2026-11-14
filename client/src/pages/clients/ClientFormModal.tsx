@@ -1,9 +1,13 @@
 import type { ReactNode } from 'react';
-import { useForm } from 'react-hook-form';
+import { useForm, useWatch } from 'react-hook-form';
 import { formResolver } from '../../lib/zodForm';
 import {
+  CLIENT_BUSINESS_TYPE_LABEL,
+  CLIENT_BUSINESS_TYPES,
   CLIENT_STATUSES,
   clientInputSchema,
+  normalizeTin,
+  TIN_PATTERN,
   type ClientDetail,
   type ClientInput,
 } from '@gs/shared';
@@ -34,6 +38,7 @@ export function ClientFormModal({
   const {
     register,
     handleSubmit,
+    control,
     formState: { errors },
   } = useForm<ClientInput>({
     resolver: formResolver(clientInputSchema),
@@ -47,6 +52,10 @@ export function ClientFormModal({
           address: client.address ?? '',
           addressKm: client.addressKm ?? '',
           vattin: client.vattin ?? '',
+          cin: client.cin ?? '',
+          businessType: client.businessType ?? '',
+          mainActivity: client.mainActivity ?? '',
+          lastVerifiedOn: client.lastVerifiedOn ?? '',
           contactName: client.contactName ?? '',
           contactEmail: client.contactEmail ?? '',
           contactPhone: client.contactPhone ?? '',
@@ -64,6 +73,13 @@ export function ClientFormModal({
         }
       : { countryIso2: 'KH', commissionUsd: '50.00', status: 'ACTIVE' },
   });
+  // A Cambodian TIN that doesn't look like L001-902401027 is probably mistyped (not refused:
+  // older numbers and foreign clients differ).
+  const [vattin, countryIso2] = useWatch({ control, name: ['vattin', 'countryIso2'] });
+  const tinWarning =
+    countryIso2 === 'KH' && vattin?.trim() && !TIN_PATTERN.test(normalizeTin(vattin.trim()))
+      ? 'Usually a letter, 3 digits and 9 digits, e.g. L001-902401027'
+      : undefined;
 
   const onSubmit = handleSubmit(async (values) => {
     const res = await save.mutateAsync({ id: client?.id, body: values });
@@ -172,10 +188,43 @@ export function ClientFormModal({
                 ))}
               </select>,
             )}
-            {field('vattin', 'VATTIN', { placeholder: 'e.g. L001-902501613' })}
+            {field('vattin', 'VAT-TIN (លេខ អតប)', { placeholder: 'e.g. L001-902401027' })}
+            {field('cin', 'CIN (MOC registration)', { placeholder: 'e.g. KH2024106187235' })}
             {field('commissionUsd', 'Commission (USD)', { decimals: 2, placeholder: '0.00' })}
+            {tinWarning && (
+              <p className={s.hintWarn} data-span={4}>
+                VAT-TIN: {tinWarning}
+              </p>
+            )}
+            {field('lastVerifiedOn', 'Last checked on the portal', { type: 'date' })}
             {field('address', 'Address (English)', { span: 4 })}
             {field('addressKm', 'អាស័យដ្ឋាន (Khmer)', { span: 4, khmer: true })}
+          </>,
+        )}
+        {section(
+          'Business',
+          'What the client does: CMT clients import materials under their CDC master list.',
+          <>
+            {box(
+              'businessType',
+              'Business type',
+              <select
+                id="cl-businessType"
+                className="form-select-box"
+                {...register('businessType')}
+              >
+                <option value="">Not set</option>
+                {CLIENT_BUSINESS_TYPES.map((v) => (
+                  <option key={v} value={v}>
+                    {CLIENT_BUSINESS_TYPE_LABEL[v]}
+                  </option>
+                ))}
+              </select>,
+            )}
+            {field('mainActivity', 'Main business activity', {
+              span: 2,
+              placeholder: 'e.g. Manufacture of garments',
+            })}
           </>,
         )}
         {section(

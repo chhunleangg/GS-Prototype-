@@ -5,6 +5,8 @@ import {
   clientListQuerySchema,
   clientConsigneeInputSchema,
   clientNoteInputSchema,
+  clientLicenceInputSchema,
+  clientPortalAccountInputSchema,
   consigneeAddressSchema,
   supplierInputSchema,
   hasPermission,
@@ -14,6 +16,7 @@ import { parse } from '../../lib/validate';
 import * as svc from './service';
 import * as notes from './notes';
 import * as parties from './parties';
+import * as licences from './licences';
 import {
   allowedClients,
   assertClientAllowed,
@@ -24,6 +27,8 @@ import {
 const idParam = z.object({ id: z.string().uuid('Invalid client id') });
 const consigneeParams = idParam.extend({ consigneeId: z.string().uuid('Invalid consignee id') });
 const noteParams = idParam.extend({ noteId: z.string().uuid('Invalid note id') });
+const licenceParams = idParam.extend({ licenceId: z.string().uuid('Invalid licence id') });
+const accountParams = idParam.extend({ accountId: z.string().uuid('Invalid account id') });
 export const clientsRouter = Router();
 clientsRouter.use(requireAuth);
 
@@ -137,6 +142,89 @@ clientsRouter.patch(
     assertClientVisible(req, id, 'Client');
     const { address } = parse(consigneeAddressSchema, req.body);
     await parties.setConsigneeAddress(id, consigneeId, address, req);
+    res.status(204).end();
+  },
+);
+
+/* ---------- Licences & documents ---------- */
+
+clientsRouter.get('/:id/licences', requirePermission('clients:read'), async (req, res) => {
+  const { id } = parse(idParam, req.params);
+  assertClientVisible(req, id, 'Client');
+  res.json(await licences.listLicences(id));
+});
+
+clientsRouter.post('/:id/licences', requirePermission('clients:write'), async (req, res) => {
+  const { id } = parse(idParam, req.params);
+  assertClientVisible(req, id, 'Client');
+  res
+    .status(201)
+    .json(await licences.createLicence(id, parse(clientLicenceInputSchema, req.body), req));
+});
+
+clientsRouter.put(
+  '/:id/licences/:licenceId',
+  requirePermission('clients:write'),
+  async (req, res) => {
+    const { id, licenceId } = parse(licenceParams, req.params);
+    assertClientVisible(req, id, 'Client');
+    await licences.updateLicence(id, licenceId, parse(clientLicenceInputSchema, req.body), req);
+    res.status(204).end();
+  },
+);
+
+clientsRouter.delete(
+  '/:id/licences/:licenceId',
+  requirePermission('clients:write'),
+  async (req, res) => {
+    const { id, licenceId } = parse(licenceParams, req.params);
+    assertClientVisible(req, id, 'Client');
+    await licences.deleteLicence(id, licenceId, req);
+    res.status(204).end();
+  },
+);
+
+/* ---------- Government portal accounts (no passwords) ---------- */
+
+clientsRouter.get('/:id/portal-accounts', requirePermission('clients:read'), async (req, res) => {
+  const { id } = parse(idParam, req.params);
+  assertClientVisible(req, id, 'Client');
+  res.json(await licences.listPortalAccounts(id));
+});
+
+clientsRouter.post('/:id/portal-accounts', requirePermission('clients:write'), async (req, res) => {
+  const { id } = parse(idParam, req.params);
+  assertClientVisible(req, id, 'Client');
+  res
+    .status(201)
+    .json(
+      await licences.createPortalAccount(id, parse(clientPortalAccountInputSchema, req.body), req),
+    );
+});
+
+clientsRouter.put(
+  '/:id/portal-accounts/:accountId',
+  requirePermission('clients:write'),
+  async (req, res) => {
+    const { id, accountId } = parse(accountParams, req.params);
+    assertClientVisible(req, id, 'Client');
+    await licences.updatePortalAccount(
+      id,
+      accountId,
+      parse(clientPortalAccountInputSchema, req.body),
+      req,
+    );
+    res.status(204).end();
+  },
+);
+
+clientsRouter.delete(
+  '/:id/portal-accounts/:accountId',
+  requirePermission('clients:write'),
+  async (req, res) => {
+    const { id, accountId } = parse(accountParams, req.params);
+    assertClientVisible(req, id, 'Client');
+    await licences.deletePortalAccount(id, accountId, req);
     res.status(204).end();
   },
 );

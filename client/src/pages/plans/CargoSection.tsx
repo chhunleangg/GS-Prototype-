@@ -1,22 +1,19 @@
-import { useEffect, useRef, useState } from 'react';
-import { useFieldArray, useFormContext, useWatch, type Control } from 'react-hook-form';
+import { useRef, useState, type CSSProperties } from 'react';
+import { useFieldArray, useFormContext, useWatch } from 'react-hook-form';
 import {
-  CUT_STOCK_CATEGORIES,
-  CUT_STOCK_CATEGORY_LABEL,
   invoiceHtsCodes,
   type CargoExcelParseResult,
-  type CutStockRow,
   type ImportCargoExcelParseResult,
 } from '@gs/shared';
-import { useAuth } from '../../auth/AuthProvider';
-import { useCutStock } from '../../features/hooks';
 import { downloadFile, uploadFile } from '../../lib/files';
 import { ApiError } from '../../lib/api';
 import { fmtNum } from '../../lib/format';
 import { FieldError } from '../../components/ui';
 import { NumberInput } from '../../components/NumberInput';
+import { icons } from '../../layout/icons';
 import { blankInvoice, blankLine, toNum, type FormValues, type InvoiceValues } from './formModel';
 import c from './CargoSection.module.css';
+import f from './ShipmentForm.module.css';
 
 const Icon = ({ d }: { d: string }) => (
   <svg
@@ -38,45 +35,28 @@ const ICON_UP = 'M12 20V8m0 0-5 5m5-5 5 5M5 4h14';
 const ICON_PLUS = 'M12 5v14M5 12h14';
 const ICON_ARROW = 'M5 12h14m-6-6 6 6-6 6';
 
-/** Card heading with its step number. */
-function Head({
-  n,
-  title,
-  tag,
-  children,
-}: {
-  n: number;
-  title: string;
-  /** A small label beside the title. */
-  tag?: React.ReactNode;
-  children?: React.ReactNode;
-}) {
-  return (
-    <div className={c.head}>
-      <h3 className={c.title}>
-        <span className={c.step}>{n}</span>
-        {title}
-        {tag && <span className={c.chip}>{tag}</span>}
-      </h3>
-      {children && <div className={c.actions}>{children}</div>}
-    </div>
-  );
-}
-
 /** The invoice's HTS codes (one invoice = one code; more than one is flagged). */
-const htsCodesOf = (lines: InvoiceValues['lines'] | undefined) => invoiceHtsCodes(lines ?? []);
+export const htsCodesOf = (lines: InvoiceValues['lines'] | undefined) => invoiceHtsCodes(lines ?? []);
 
 /** CDC numbers compare without case, spaces or dashes ("II-125" = "ii 125"), as on the server. */
-const cdcKey = (s: string | null | undefined) => (s ?? '').toUpperCase().replace(/[\s\-–—_]+/g, '');
+export const cdcKey = (s: string | null | undefined) => (s ?? '').toUpperCase().replace(/[\s\-–—_]+/g, '');
 
-const money = (n: number) =>
+export const money = (n: number) =>
   n.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 
 /** A line counts as entered once it has a quantity or something that names the goods. */
-const lineEntered = (l: InvoiceValues['lines'][number]) =>
+export const lineEntered = (l: InvoiceValues['lines'][number]) =>
   !!(toNum(l.pcs) || l.cdcNo || l.poNo || l.styleNo);
 
-const hasLineErrors = (errors: unknown, gi: number) =>
+type InvErrors =
+  | {
+      invoiceNo?: { message?: string };
+      htsCode?: { message?: string };
+      lines?: { message?: string } | Record<number, Record<string, { message?: string }>>;
+    }
+  | undefined;
+
+export const hasLineErrors = (errors: unknown, gi: number) =>
   Array.isArray(errors) && !!(errors[gi] as { lines?: unknown } | undefined)?.lines;
 
 /**
@@ -96,6 +76,7 @@ export function InvoicesSection({
 }) {
   const {
     control,
+    register,
     getValues,
     setValue,
     formState: { errors },
@@ -209,74 +190,63 @@ export function InvoicesSection({
     { ctns: 0, pcs: 0, nw: 0, gw: 0, cbm: 0, fob: 0 },
   );
   const invErr = errors.invoices;
-  const cols = isImport ? 7 : 9;
   const itemCount = (watched ?? []).reduce((n, i) => n + i.lines.filter(lineEntered).length, 0);
-  const stats: [string, string][] = isImport
-    ? [
-        ['Quantity', fmtNum(totals.pcs, 2)],
-        ['Net Wt (kg)', fmtNum(totals.nw, 2)],
-        ['Gross Wt (kg)', fmtNum(totals.gw, 2)],
-        ['Items', fmtNum(itemCount)],
-      ]
-    : [
-        ['CTNS', fmtNum(totals.ctns)],
-        ['PCS', fmtNum(totals.pcs)],
-        ['Net Wt (kg)', fmtNum(totals.nw, 2)],
-        ['Gross Wt (kg)', fmtNum(totals.gw, 2)],
-        ['CBM', fmtNum(totals.cbm)],
-      ];
   const noClient = isImport && !clientId;
+  const [currency, exchangeRate] = useWatch({ control, name: ['currency', 'exchangeRate'] });
+  const cur = currency || 'USD';
+  const khrValue = cur === 'KHR' ? totals.fob : totals.fob * toNum(exchangeRate);
+  // An import has one invoice, entered beside its bill of lading; an export lists many.
+  const single = isImport && invoices.fields.length <= 1;
+
+  const toolbar = (
+    <div className={c.actions}>
+      {/* Imports have their own template, listing the client's CDC master list. */}
+      <button
+        type="button"
+        className={c.btn}
+        disabled={noClient}
+        title={noClient ? 'Choose the client first' : 'Download the Excel template'}
+        onClick={() =>
+          void (
+            isImport
+              ? downloadFile('/shipments/import-cargo-template.xlsx', { clientId })
+              : downloadFile('/shipments/cargo-template.xlsx')
+          ).catch(() =>
+            setStatus({
+              text: 'The template could not be downloaded.',
+              warnings: [],
+              error: true,
+            }),
+          )
+        }
+      >
+        <Icon d={ICON_DOWN} /> Template
+      </button>
+      <button
+        type="button"
+        className={`${c.btn} ${c.btnOutline}`}
+        onClick={() => fileRef.current?.click()}
+        disabled={uploading || noClient}
+        title={noClient ? 'Choose the client first' : undefined}
+      >
+        <Icon d={ICON_UP} /> {uploading ? 'Reading…' : 'Upload Excel'}
+      </button>
+      <input
+        ref={fileRef}
+        type="file"
+        accept=".xlsx,.csv"
+        hidden
+        onChange={(e) => e.target.files?.[0] && void onExcel(e.target.files[0])}
+      />
+    </div>
+  );
 
   return (
-    <section className={c.card}>
-      <Head n={1} title="Invoices">
-        {/* Imports have their own template, listing the client's CDC master list. */}
-        <button
-          type="button"
-          className={c.btn}
-          disabled={noClient}
-          title={noClient ? 'Choose the client first' : 'Download the Excel template'}
-          onClick={() =>
-            void (
-              isImport
-                ? downloadFile('/shipments/import-cargo-template.xlsx', { clientId })
-                : downloadFile('/shipments/cargo-template.xlsx')
-            ).catch(() =>
-              setStatus({
-                text: 'The template could not be downloaded.',
-                warnings: [],
-                error: true,
-              }),
-            )
-          }
-        >
-          <Icon d={ICON_DOWN} /> Template
-        </button>
-        <button
-          type="button"
-          className={`${c.btn} ${c.btnOutline}`}
-          onClick={() => fileRef.current?.click()}
-          disabled={uploading || noClient}
-          title={noClient ? 'Choose the client first' : undefined}
-        >
-          <Icon d={ICON_UP} /> {uploading ? 'Reading…' : 'Upload Excel'}
-        </button>
-        <span className={c.divider} aria-hidden />
-        <button
-          type="button"
-          className={`${c.btn} ${c.btnPrimary}`}
-          onClick={() => invoices.append(blankInvoice(getValues('invoices.0.invoiceDate') ?? ''))}
-        >
-          <Icon d={ICON_PLUS} /> Add invoice
-        </button>
-        <input
-          ref={fileRef}
-          type="file"
-          accept=".xlsx,.csv"
-          hidden
-          onChange={(e) => e.target.files?.[0] && void onExcel(e.target.files[0])}
-        />
-      </Head>
+    <div className="cx-card">
+      <div className={c.head}>
+        <h3 className={c.title}>Invoice</h3>
+        {toolbar}
+      </div>
       {status && (
         <div className={c.notice} data-tone={status.error ? 'error' : 'ok'} role="status">
           {status.text}
@@ -297,58 +267,229 @@ export function InvoicesSection({
           <FieldError message={invErr.message} />
         </div>
       )}
-      <div className={c.tableWrap}>
-        <table className={c.table}>
-          <thead>
-            <tr>
-              <th>#</th>
-              <th>Invoice No.</th>
-              <th>Invoice Date</th>
-              {!isImport && <th>HTS Code</th>}
-              <th className={c.num}>{isImport ? 'Items' : 'Lines'}</th>
-              <th className={c.num}>{isImport ? 'Quantity' : 'PCS'}</th>
-              {!isImport && <th className={c.num}>CTNS</th>}
-              <th className={c.num}>Amount (USD)</th>
-              <th />
-            </tr>
-          </thead>
-          <tbody>
-            {invoices.fields.map((f, gi) => (
-              <InvoiceRow
-                key={f.id}
-                gi={gi}
-                active={gi === active}
-                isImport={isImport}
-                cols={cols}
-                onDate={setSharedDate}
-                onItems={() => onOpenItems(gi)}
-                onRemove={invoices.fields.length > 1 ? () => invoices.remove(gi) : undefined}
-                errors={Array.isArray(invErr) ? invErr[gi] : undefined}
-                itemErrors={hasLineErrors(invErr, gi)}
-              />
-            ))}
-          </tbody>
-        </table>
-      </div>
-      <div className={c.summary} aria-label="Shipment total">
-        <span className={c.summaryLabel}>Shipment total</span>
-        <dl className={c.stats}>
-          {stats.map(([k, v]) => (
-            <div key={k}>
-              <dt>{k}</dt>
-              <dd>{v}</dd>
+
+      <div className={f.nswCols}>
+        <section className={f.formSection}>
+          <h4 className={f.formSectionTitle}>
+            {icons.documents({})}
+            {single ? 'Invoice & Bill of Lading' : 'Terms & Bill of Lading'}
+          </h4>
+          {single && invoices.fields[0] && (
+            <SingleInvoice
+              errors={Array.isArray(invErr) ? invErr[0] : undefined}
+              itemCount={itemCount}
+              itemErrors={hasLineErrors(invErr, 0)}
+              onItems={() => onOpenItems(0)}
+            />
+          )}
+          <div className="form-field-group">
+            <label htmlFor="f-incoterm">Incoterm</label>
+            <select id="f-incoterm" className="form-select-box" {...register('incoterm')}>
+              <option value="">Select Incoterm</option>
+              {INCOTERMS.map(([code, name]) => (
+                <option key={code} value={code}>
+                  {code} – {name}
+                </option>
+              ))}
+            </select>
+          </div>
+          <div className="form-field-group">
+            <label htmlFor="f-hblNo">BL No. (BL / AWB / Road Bill)</label>
+            <input id="f-hblNo" className="form-field-box" {...register('hblNo')} />
+          </div>
+          <div className="form-field-group">
+            <label htmlFor="f-blDate">BL Date</label>
+            <input id="f-blDate" type="date" className="form-field-box" {...register('blDate')} />
+          </div>
+        </section>
+
+        <section className={f.formSection}>
+          <h4 className={f.formSectionTitle}>
+            {icons.accounting({})}
+            Invoice Information
+          </h4>
+          <div className={f.grid} style={{ '--cols': 2 } as CSSProperties}>
+            <div className="form-field-group">
+              <label htmlFor="f-currency">Currency</label>
+              <select id="f-currency" className="form-select-box" {...register('currency')}>
+                {CURRENCIES.map(([code, name]) => (
+                  <option key={code} value={code}>
+                    {code} – {name}
+                  </option>
+                ))}
+              </select>
             </div>
-          ))}
-        </dl>
-        <div className={c.grand}>
-          <span>{isImport ? 'Amount' : 'Total FOB'}</span>
-          <strong>
-            {money(totals.fob)}
-            <small>USD</small>
-          </strong>
+            <div className="form-field-group">
+              <label htmlFor="f-exchangeRate">Exchange Rate (KHR per 1 {cur})</label>
+              <NumberInput
+                id="f-exchangeRate"
+                className="form-field-box"
+                decimals={4}
+                placeholder={cur === 'KHR' ? '1' : 'e.g. 4,090'}
+                disabled={cur === 'KHR'}
+                {...register('exchangeRate')}
+              />
+            </div>
+            <ReadOnlyBox label={`Invoice Value (${cur})`} value={money(totals.fob)} />
+            <ReadOnlyBox
+              label="Invoice Value (KHR)"
+              value={khrValue ? money(khrValue) : '—'}
+              title={cur !== 'KHR' && !toNum(exchangeRate) ? 'Enter the exchange rate' : undefined}
+            />
+            <ReadOnlyBox
+              label={isImport ? 'Quantity' : 'Quantity (PCS / CTNS)'}
+              value={
+                isImport
+                  ? `${fmtNum(totals.pcs, 2)} · ${fmtNum(itemCount)} item${itemCount === 1 ? '' : 's'}`
+                  : `${fmtNum(totals.pcs)} PCS · ${fmtNum(totals.ctns)} CTNS`
+              }
+            />
+            <ReadOnlyBox
+              label={isImport ? 'Net / Gross Weight (kg)' : 'Net / Gross Wt (kg) · CBM'}
+              value={
+                `${fmtNum(totals.nw, 2)} / ${fmtNum(totals.gw, 2)}` +
+                (isImport ? '' : ` · ${fmtNum(totals.cbm, 3)}`)
+              }
+            />
+          </div>
+        </section>
+      </div>
+
+      {!single && (
+        <div className={c.listBlock}>
+          <div className={c.listHead}>
+            <h4 className={f.formSectionTitle}>
+              {icons.menu({})}
+              Invoice List
+            </h4>
+            <button
+              type="button"
+              className={`${c.btn} ${c.btnPrimary}`}
+              onClick={() =>
+                invoices.append(blankInvoice(getValues('invoices.0.invoiceDate') ?? ''))
+              }
+            >
+              <Icon d={ICON_PLUS} /> Add invoice
+            </button>
+          </div>
+          <table className={c.invTable}>
+            <thead>
+              <tr>
+                <th style={{ width: 48 }}>No.</th>
+                <th>Invoice No.</th>
+                <th style={{ width: 220 }}>Invoice Date</th>
+                <th style={{ width: 1 }}>Action</th>
+              </tr>
+            </thead>
+            <tbody>
+              {invoices.fields.map((fl, gi) => (
+                <InvoiceRow
+                  key={fl.id}
+                  gi={gi}
+                  active={gi === active}
+                  isImport={isImport}
+                  onDate={setSharedDate}
+                  onItems={() => onOpenItems(gi)}
+                  onRemove={invoices.fields.length > 1 ? () => invoices.remove(gi) : undefined}
+                  errors={Array.isArray(invErr) ? invErr[gi] : undefined}
+                  itemErrors={hasLineErrors(invErr, gi)}
+                />
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
+    </div>
+  );
+}
+
+const INCOTERMS: [string, string][] = [
+  ['EXW', 'Ex Works'],
+  ['FCA', 'Free Carrier'],
+  ['FAS', 'Free Alongside Ship'],
+  ['FOB', 'Free On Board'],
+  ['CFR', 'Cost and Freight'],
+  ['CIF', 'Cost, Insurance and Freight'],
+  ['CPT', 'Carriage Paid To'],
+  ['CIP', 'Carriage and Insurance Paid To'],
+  ['DAP', 'Delivered At Place'],
+  ['DPU', 'Delivered at Place Unloaded'],
+  ['DDP', 'Delivered Duty Paid'],
+];
+
+const CURRENCIES: [string, string][] = [
+  ['USD', 'United States Dollar'],
+  ['KHR', 'Cambodian Riel'],
+  ['CNY', 'Chinese Yuan'],
+  ['EUR', 'Euro'],
+  ['HKD', 'Hong Kong Dollar'],
+  ['JPY', 'Japanese Yen'],
+  ['KRW', 'South Korean Won'],
+  ['SGD', 'Singapore Dollar'],
+  ['THB', 'Thai Baht'],
+  ['TWD', 'New Taiwan Dollar'],
+  ['VND', 'Vietnamese Dong'],
+  ['GBP', 'British Pound'],
+];
+
+function ReadOnlyBox({ label, value, title }: { label: string; value: string; title?: string }) {
+  return (
+    <div className="form-field-group">
+      <label>{label}</label>
+      <div className={f.roBox} title={title}>
+        {value}
+      </div>
+    </div>
+  );
+}
+
+/** An import's one invoice: its number and date sit with the bill of lading. */
+function SingleInvoice({
+  errors,
+  itemCount,
+  itemErrors,
+  onItems,
+}: {
+  errors: unknown;
+  itemCount: number;
+  itemErrors: boolean;
+  onItems: () => void;
+}) {
+  const { register } = useFormContext<FormValues>();
+  const e = errors as InvErrors;
+  return (
+    <>
+      <div className="form-field-group">
+        <label htmlFor="f-inv-0-no">Invoice No.</label>
+        <input
+          id="f-inv-0-no"
+          className="form-field-box"
+          placeholder="e.g. CNQ26044"
+          {...register('invoices.0.invoiceNo')}
+          aria-invalid={!!e?.invoiceNo}
+        />
+        <FieldError message={e?.invoiceNo?.message} />
+      </div>
+      <div className="form-field-group">
+        <label htmlFor="f-inv-0-date">Invoice Date</label>
+        <div className={c.dateWithItems}>
+          <input
+            id="f-inv-0-date"
+            type="date"
+            className="form-field-box"
+            {...register('invoices.0.invoiceDate')}
+          />
+          <button
+            type="button"
+            className={`${c.btn} ${itemErrors ? c.btnDanger : itemCount ? c.btnOutline : c.btnAdd}`}
+            onClick={onItems}
+          >
+            {itemErrors ? '! Fix items' : itemCount ? `Items (${itemCount})` : 'Enter items'}
+            <Icon d={ICON_ARROW} />
+          </button>
         </div>
       </div>
-    </section>
+    </>
   );
 }
 
@@ -356,7 +497,6 @@ function InvoiceRow({
   gi,
   active,
   isImport,
-  cols,
   onDate,
   onItems,
   onRemove,
@@ -366,84 +506,46 @@ function InvoiceRow({
   gi: number;
   active: boolean;
   isImport: boolean;
-  cols: number;
   onDate: (d: string) => void;
   onItems: () => void;
   onRemove: (() => void) | undefined;
   errors: unknown;
   itemErrors: boolean;
 }) {
-  const { control, register, setValue } = useFormContext<FormValues>();
+  const { control, register } = useFormContext<FormValues>();
   const lines = useWatch({ control, name: `invoices.${gi}.lines` }) ?? [];
   const e = errors as InvErrors;
-  // Only exports carry an HTS code per invoice; import items are matched by CDC no. instead.
+  // One invoice = one HTS code (entered on the items); a mix is flagged here.
   const htsCodes = isImport ? [] : htsCodesOf(lines);
-  // One invoice = one HTS code: entered once here and written to every line.
-  const setHts = (code: string) =>
-    lines.forEach((_, li) =>
-      setValue(`invoices.${gi}.lines.${li}.htsCode`, code, { shouldDirty: true }),
-    );
-  const sum = lines.reduce<{ pcs: number; ctns: number; amount: number }>(
-    (t, l) => ({
-      pcs: t.pcs + toNum(l.pcs),
-      ctns: t.ctns + toNum(l.ctns),
-      amount: t.amount + toNum(l.pcs) * toNum(l.fobUnitPrice),
-    }),
-    { pcs: 0, ctns: 0, amount: 0 },
-  );
   const entered = lines.filter(lineEntered).length;
   const message =
     e?.invoiceNo?.message ??
     (htsCodes.length > 1
-      ? `The lines have different HTS codes (${htsCodes.join(', ')}). One invoice uses one HTS code — enter it here.`
+      ? `The items have different HS codes (${htsCodes.join(', ')}). One invoice uses one HS code.`
       : e?.htsCode?.message);
   return (
     <>
       <tr data-active={active}>
         <td>{gi + 1}</td>
-        <td style={{ minWidth: 180 }}>
+        <td>
           <input
             type="text"
-            className={c.in}
-            placeholder={isImport ? 'e.g. CNQ26044' : 'Invoice No.'}
+            className="form-field-box"
+            placeholder="Invoice No."
             {...register(`invoices.${gi}.invoiceNo`)}
             aria-invalid={!!e?.invoiceNo}
           />
         </td>
-        <td style={{ width: 180 }}>
+        <td>
           <input
             type="date"
-            className={c.in}
+            className="form-field-box"
             {...register(`invoices.${gi}.invoiceDate`, {
               onChange: (ev: React.ChangeEvent<HTMLInputElement>) => onDate(ev.target.value),
             })}
           />
         </td>
-        {!isImport && (
-          <td style={{ width: 160 }}>
-            <input
-              type="text"
-              className={c.in}
-              placeholder={htsCodes.length > 1 ? 'Choose one' : 'HTS Code'}
-              value={htsCodes.length === 1 ? htsCodes[0] : ''}
-              onChange={(ev) => setHts(ev.target.value)}
-              aria-invalid={htsCodes.length > 1 || !!e?.htsCode}
-            />
-          </td>
-        )}
-        <td className={`${c.num} ${entered ? '' : c.muted}`}>{entered || '—'}</td>
-        <td className={`${c.num} ${sum.pcs ? '' : c.muted}`}>
-          {sum.pcs ? fmtNum(sum.pcs, isImport ? 2 : 0) : '—'}
-        </td>
-        {!isImport && (
-          <td className={`${c.num} ${sum.ctns ? '' : c.muted}`}>
-            {sum.ctns ? fmtNum(sum.ctns) : '—'}
-          </td>
-        )}
-        <td className={`${c.num} ${sum.amount ? '' : c.muted}`} style={{ fontWeight: 600 }}>
-          {sum.amount ? money(sum.amount) : '—'}
-        </td>
-        <td style={{ width: 1 }}>
+        <td>
           <div className={c.rowActions}>
             <button
               type="button"
@@ -451,28 +553,25 @@ function InvoiceRow({
               onClick={onItems}
               title={itemErrors ? 'Some items need fixing' : undefined}
             >
-              {itemErrors ? '! Fix items' : entered ? 'Edit items' : 'Enter items'}
+              {itemErrors ? '! Fix items' : entered ? `Items (${entered})` : 'Enter items'}
               <Icon d={ICON_ARROW} />
             </button>
-            {onRemove ? (
-              <button
-                type="button"
-                className={c.del}
-                title="Remove invoice"
-                aria-label="Remove invoice"
-                onClick={onRemove}
-              >
-                ×
-              </button>
-            ) : (
-              <span style={{ width: 28 }} aria-hidden />
-            )}
+            <button
+              type="button"
+              className={c.delSolid}
+              title={onRemove ? 'Remove invoice' : 'An invoice list keeps at least one invoice'}
+              aria-label="Remove invoice"
+              disabled={!onRemove}
+              onClick={onRemove}
+            >
+              ×
+            </button>
           </div>
         </td>
       </tr>
       {message && (
         <tr className={c.msgRow}>
-          <td colSpan={cols}>
+          <td colSpan={4}>
             <FieldError message={message} />
           </td>
         </tr>
@@ -483,570 +582,3 @@ function InvoiceRow({
 
 /** Where "Enter items →" scrolls to. */
 export const ITEMS_ANCHOR = 'cargo-items';
-
-/**
- * "② Items", under the invoices: choose one invoice, then enter its items. One invoice at a
- * time, always open, so the items of different invoices never mix on screen.
- */
-export function ItemsSection({
-  active,
-  onActive,
-}: {
-  active: number;
-  onActive: (gi: number) => void;
-}) {
-  const {
-    control,
-    register,
-    formState: { errors, defaultValues },
-  } = useFormContext<FormValues>();
-  const watched = useWatch({ control, name: 'invoices' }) ?? [];
-  const isImport = useWatch({ control, name: 'direction' }) === 'IMPORT';
-  const clientId = useWatch({ control, name: 'clientId' });
-  const cut = useCutStock({ clientId, pageSize: 500, sort: 'lineNo' }, isImport && !!clientId);
-  const cdcItems = cut.data?.data ?? [];
-  // Each import item's PCS come off its master-list balance. The balance already excludes this
-  // shipment's saved items (saving replaces them), so those are added back before the form's.
-  const remainingAfter = new Map<string, number>();
-  if (isImport) {
-    const byKey = new Map(cdcItems.map((it) => [cdcKey(it.declareRef), it]));
-    const add = (cdcNo: string | null | undefined, qty: number) => {
-      const it = cdcNo ? byKey.get(cdcKey(cdcNo)) : undefined;
-      if (it) remainingAfter.set(it.id, (remainingAfter.get(it.id) ?? Number(it.balance)) + qty);
-    };
-    defaultValues?.invoices?.forEach((inv) =>
-      inv?.lines?.forEach((l) => add(l?.cdcNo, toNum(l?.pcs))),
-    );
-    watched.forEach((inv) => inv.lines?.forEach((l) => add(l.cdcNo, -toNum(l.pcs))));
-  }
-  const invErr = errors.invoices;
-  const gi = Math.min(Math.max(active, 0), watched.length - 1);
-  const inv = watched[gi];
-
-  if (!inv)
-    return (
-      <section className={c.card} id={ITEMS_ANCHOR}>
-        <p className={c.empty}>No invoices yet: add one above first.</p>
-      </section>
-    );
-
-  const noun = isImport ? 'item' : 'line';
-  return (
-    <section className={c.card} id={ITEMS_ANCHOR}>
-      <Head
-        n={2}
-        title={isImport ? 'CDC Items' : 'Line Items'}
-        tag={watched.length > 1 ? undefined : inv.invoiceNo || 'Invoice 1'}
-      />
-      {watched.length > 1 && (
-        <div className={c.switcher} role="group" aria-label="Invoice">
-          {watched.map((x, i) => {
-            const n = x.lines.filter(lineEntered).length;
-            return (
-              <button
-                key={i}
-                type="button"
-                className={c.switch}
-                aria-pressed={i === gi}
-                data-error={hasLineErrors(invErr, i)}
-                onClick={() => onActive(i)}
-              >
-                {x.invoiceNo || `Invoice ${i + 1}`}
-                <small>
-                  {n} {noun}
-                  {n === 1 ? '' : 's'}
-                </small>
-              </button>
-            );
-          })}
-        </div>
-      )}
-      {isImport ? (
-        <ImportInvoiceCard
-          key={gi}
-          gi={gi}
-          control={control}
-          register={register}
-          cdcItems={cdcItems}
-          remainingAfter={remainingAfter}
-          errors={Array.isArray(invErr) ? invErr[gi] : undefined}
-        />
-      ) : (
-        <InvoiceCard
-          key={gi}
-          gi={gi}
-          control={control}
-          register={register}
-          errors={Array.isArray(invErr) ? invErr[gi] : undefined}
-        />
-      )}
-    </section>
-  );
-}
-
-type InvErrors =
-  | {
-      invoiceNo?: { message?: string };
-      htsCode?: { message?: string };
-      lines?: { message?: string } | Record<number, Record<string, { message?: string }>>;
-    }
-  | undefined;
-
-/** An export invoice's line items, grouped under descriptions. */
-function InvoiceCard({
-  gi,
-  control,
-  register,
-  errors,
-}: {
-  gi: number;
-  control: Control<FormValues>;
-  register: ReturnType<typeof useFormContext<FormValues>>['register'];
-  errors: unknown;
-}) {
-  const { setValue, getValues } = useFormContext<FormValues>();
-  const lines = useFieldArray({ control, name: `invoices.${gi}.lines` });
-  const watchedLines = useWatch({ control, name: `invoices.${gi}.lines` });
-  const invDesc = useWatch({ control, name: `invoices.${gi}.description` }) ?? '';
-
-  // Lines are grouped under descriptions. A group starts at a line whose (stable) field id
-  // is in `starts`, seeded from where the saved descriptions change.
-  const [starts, setStarts] = useState<Set<string>>(() => {
-    const saved = getValues(`invoices.${gi}.lines`) ?? [];
-    return new Set(
-      lines.fields
-        .filter(
-          (_, i) => i === 0 || (saved[i]?.description ?? '') !== (saved[i - 1]?.description ?? ''),
-        )
-        .map((f) => f.id),
-    );
-  });
-  const newGroup = useRef(false);
-  const [focusId, setFocusId] = useState<string | null>(null);
-  // "+ Add Description" appends a line; once it has an id, make it start a new group.
-  useEffect(() => {
-    if (!newGroup.current) return;
-    newGroup.current = false;
-    const last = lines.fields.at(-1);
-    if (!last) return;
-    setStarts((s) => new Set(s).add(last.id));
-    setFocusId(last.id);
-  }, [lines.fields]);
-  const groups: { start: number; idx: number[] }[] = [];
-  lines.fields.forEach((f, i) => {
-    if (i === 0 || starts.has(f.id)) groups.push({ start: i, idx: [i] });
-    else groups.at(-1)!.idx.push(i);
-  });
-  // Older invoices kept one description on the invoice only; show it on the first group.
-  const descOf = (g: { start: number }) =>
-    watchedLines?.[g.start]?.description || (g.start === 0 ? invDesc : '');
-  const setDesc = (g: { start: number; idx: number[] }, v: string) => {
-    g.idx.forEach((i) =>
-      setValue(`invoices.${gi}.lines.${i}.description`, v, { shouldDirty: true }),
-    );
-    // The invoice's own description mirrors the first group (used on printed documents).
-    if (g.start === 0) setValue(`invoices.${gi}.description`, v, { shouldDirty: true });
-  };
-  const blank = (description: string) => ({
-    ...blankLine(),
-    htsCode: htsCodesOf(getValues(`invoices.${gi}.lines`))[0] ?? '',
-    description,
-  });
-  const addLine = () => lines.append(blank(descOf(groups.at(-1)!)));
-  const addDescription = () => {
-    newGroup.current = true;
-    lines.append(blank(''));
-  };
-  const removeLine = (li: number) => {
-    // Removing a group's first line: the next line of that group takes over as its start.
-    const id = lines.fields[li]!.id;
-    const next = lines.fields[li + 1];
-    if (starts.has(id) && next && !starts.has(next.id)) setStarts((s) => new Set(s).add(next.id));
-    lines.remove(li);
-  };
-  const removeGroup = (g: { start: number; idx: number[] }) => {
-    if (g.start === 0) {
-      const second = groups[1];
-      setValue(`invoices.${gi}.description`, second ? descOf(second) : '', {
-        shouldDirty: true,
-      });
-    }
-    lines.remove(g.idx);
-  };
-  const e = errors as InvErrors;
-  // Invoice totals under the line items.
-  type Sum = { pcs: number; ctns: number; nw: number; gw: number; cbm: number; fob: number };
-  const lineSum = (watchedLines ?? []).reduce<Sum>(
-    (t, l) => ({
-      pcs: t.pcs + toNum(l.pcs),
-      ctns: t.ctns + toNum(l.ctns),
-      nw: t.nw + toNum(l.netWeightKg),
-      gw: t.gw + toNum(l.grossWeightKg),
-      cbm: t.cbm + toNum(l.cbm),
-      fob: t.fob + toNum(l.pcs) * toNum(l.fobUnitPrice),
-    }),
-    { pcs: 0, ctns: 0, nw: 0, gw: 0, cbm: 0, fob: 0 },
-  );
-  const lineErr = (li: number, f: string) =>
-    e?.lines && !('message' in e.lines)
-      ? (e.lines as Record<number, Record<string, { message?: string }>>)[li]?.[f]?.message
-      : undefined;
-  /** One cell of a line; the column header names it. */
-  const F = (
-    li: number,
-    field:
-      | 'poNo'
-      | 'styleNo'
-      | 'htsCode'
-      | 'pcs'
-      | 'ctns'
-      | 'netWeightKg'
-      | 'grossWeightKg'
-      | 'cbm'
-      | 'fobUnitPrice',
-    label: string,
-    ph: string,
-    num = false,
-  ) =>
-    num ? (
-      <NumberInput
-        decimals={field === 'fobUnitPrice' ? 4 : 3}
-        className={`${c.in} ${c.inNum}`}
-        placeholder={ph}
-        aria-label={label}
-        {...register(`invoices.${gi}.lines.${li}.${field}`)}
-        aria-invalid={!!lineErr(li, field)}
-        title={lineErr(li, field)}
-      />
-    ) : (
-      <input
-        type="text"
-        className={c.in}
-        placeholder={ph}
-        aria-label={label}
-        {...register(`invoices.${gi}.lines.${li}.${field}`)}
-        aria-invalid={!!lineErr(li, field)}
-        title={lineErr(li, field)}
-      />
-    );
-
-  const renderLine = (li: number) => {
-    const l = watchedLines?.[li];
-    const total = l && l.pcs && l.fobUnitPrice ? toNum(l.pcs) * toNum(l.fobUnitPrice) : null;
-    return (
-      <div className={c.gRow} key={lines.fields[li]!.id}>
-        {F(li, 'poNo', 'PO No.', 'PO No.')}
-        {F(li, 'styleNo', 'Style', 'Style No.')}
-        {F(li, 'pcs', 'PCS', '0', true)}
-        {F(li, 'ctns', 'CTNS', '0', true)}
-        {F(li, 'netWeightKg', 'Net Wt (kg)', '0.00', true)}
-        {F(li, 'grossWeightKg', 'Gross Wt (kg)', '0.00', true)}
-        {F(li, 'cbm', 'CBM', '0.00', true)}
-        {F(li, 'fobUnitPrice', 'Unit price (USD)', '0.00', true)}
-        <div className={c.amount}>{total !== null ? money(total) : ''}</div>
-        {lines.fields.length > 1 ? (
-          <button
-            type="button"
-            className={c.del}
-            title="Remove line"
-            aria-label="Remove line"
-            onClick={() => removeLine(li)}
-          >
-            ×
-          </button>
-        ) : (
-          <span />
-        )}
-      </div>
-    );
-  };
-
-  return (
-    <>
-      <div className={c.gridWrap}>
-        <div className={`${c.grid} ${c.gridExport}`}>
-          <div className={c.gHead}>
-            <div>PO No.</div>
-            <div>Style</div>
-            <div className={c.r}>PCS</div>
-            <div className={c.r}>CTNS</div>
-            <div className={c.r}>Net Wt (kg)</div>
-            <div className={c.r}>Gross Wt (kg)</div>
-            <div className={c.r}>CBM</div>
-            <div className={c.r}>Unit (USD)</div>
-            <div className={c.r}>Total (USD)</div>
-            <div />
-          </div>
-          {groups.map((g) => {
-            const id = lines.fields[g.start]!.id;
-            return (
-              <div className={c.descGroup} key={id}>
-                <div className={c.desc}>
-                  <span className={c.descLabel}>Description</span>
-                  <input
-                    type="text"
-                    className={c.in}
-                    aria-label="Description"
-                    placeholder="e.g. Mens woven shorts 100 nylon"
-                    value={descOf(g)}
-                    onChange={(ev) => setDesc(g, ev.target.value)}
-                    autoFocus={focusId === id}
-                  />
-                  {groups.length > 1 ? (
-                    <button
-                      type="button"
-                      className={c.del}
-                      title="Remove this description and its lines"
-                      aria-label="Remove description"
-                      onClick={() => removeGroup(g)}
-                    >
-                      ×
-                    </button>
-                  ) : (
-                    <span style={{ width: 28, flexShrink: 0 }} />
-                  )}
-                </div>
-                {g.idx.map(renderLine)}
-              </div>
-            );
-          })}
-          {/* Invoice total, column-aligned with the line fields above. */}
-          <div className={c.gTotal} aria-label="Invoice total">
-            <div className={c.gTotalLabel} style={{ gridColumn: 'span 2' }}>
-              Invoice total
-            </div>
-            <div className={c.r}>{fmtNum(lineSum.pcs)}</div>
-            <div className={c.r}>{fmtNum(lineSum.ctns)}</div>
-            <div className={c.r}>{fmtNum(lineSum.nw, 2)}</div>
-            <div className={c.r}>{fmtNum(lineSum.gw, 2)}</div>
-            <div className={c.r}>{fmtNum(lineSum.cbm, 3)}</div>
-            <div />
-            <div className={`${c.r} ${c.accent}`}>{money(lineSum.fob)}</div>
-            <div />
-          </div>
-        </div>
-      </div>
-      <div className={c.foot}>
-        {/* New line under the latest description. */}
-        <button type="button" className={`${c.btn} ${c.btnAdd}`} onClick={addLine}>
-          <Icon d={ICON_PLUS} /> Add line
-        </button>
-        {/* New description with its first line. */}
-        <button type="button" className={`${c.btn} ${c.btnAdd}`} onClick={addDescription}>
-          <Icon d={ICON_PLUS} /> Add description
-        </button>
-      </div>
-    </>
-  );
-}
-
-/** "II. Raw Material" → "II. RAW MATERIAL", as the import schedule writes it. */
-const materialOf = (it: CutStockRow) => CUT_STOCK_CATEGORY_LABEL[it.category].toUpperCase();
-
-/**
- * An import invoice, laid out like the import schedule: INV · DATE, then one line
- * per item (CDC NO · ITEM · MATERIAL · QUANTITY · CDC UNIT · NW · GW · UNIT PRICE · AMOUNT).
- * Choosing a CDC NO from the client's master list fills in its item, material, unit and price.
- */
-function ImportInvoiceCard({
-  gi,
-  control,
-  register,
-  cdcItems,
-  remainingAfter,
-  errors,
-}: {
-  gi: number;
-  control: Control<FormValues>;
-  register: ReturnType<typeof useFormContext<FormValues>>['register'];
-  cdcItems: CutStockRow[];
-  remainingAfter: Map<string, number>;
-  errors: unknown;
-}) {
-  const { setValue, getValues } = useFormContext<FormValues>();
-  const { can } = useAuth();
-  const lines = useFieldArray({ control, name: `invoices.${gi}.lines` });
-  const watchedLines = useWatch({ control, name: `invoices.${gi}.lines` });
-  const e = errors as InvErrors;
-  const sum = (watchedLines ?? []).reduce(
-    (t, l) => ({
-      qty: t.qty + toNum(l.pcs),
-      nw: t.nw + toNum(l.netWeightKg),
-      gw: t.gw + toNum(l.grossWeightKg),
-      amount: t.amount + toNum(l.pcs) * toNum(l.fobUnitPrice),
-    }),
-    { qty: 0, nw: 0, gw: 0, amount: 0 },
-  );
-  const lineErr = (li: number, f: string) =>
-    e?.lines && !('message' in e.lines)
-      ? (e.lines as Record<number, Record<string, { message?: string }>>)[li]?.[f]?.message
-      : undefined;
-
-  // The item is chosen from the client's CDC master list; its CDC no., material and unit follow.
-  const itemOf = (cdcNo: string | null | undefined) =>
-    cdcNo ? cdcItems.find((x) => cdcKey(x.declareRef) === cdcKey(cdcNo)) : undefined;
-  const pickItem = (li: number, cdcNo: string) => {
-    const it = itemOf(cdcNo);
-    const path = `invoices.${gi}.lines.${li}` as const;
-    const opts = { shouldDirty: true };
-    setValue(`${path}.cdcNo`, it?.declareRef ?? '', opts);
-    setValue(`${path}.description`, it?.name ?? '', opts);
-    setValue(`${path}.material`, it ? materialOf(it) : '', opts);
-    setValue(`${path}.unit`, it?.unit ?? '', opts);
-    if (it && !toNum(getValues(`${path}.fobUnitPrice`)))
-      setValue(`${path}.fobUnitPrice`, String(Number(it.unitPrice)), opts);
-  };
-  /** CDC no., material and unit come from the chosen item: shown, not typed. */
-  const Auto = (li: number, field: 'cdcNo' | 'material' | 'unit', label: string) => (
-    <input
-      type="text"
-      className={`${c.in} ${c.auto}`}
-      placeholder="—"
-      aria-label={label}
-      readOnly
-      tabIndex={-1}
-      {...register(`invoices.${gi}.lines.${li}.${field}`)}
-    />
-  );
-
-  /** One cell of an item; the column header names it. */
-  const F = (
-    li: number,
-    field: 'pcs' | 'netWeightKg' | 'grossWeightKg' | 'fobUnitPrice',
-    label: string,
-    ph: string,
-  ) => (
-    <NumberInput
-      decimals={field === 'fobUnitPrice' ? 4 : 3}
-      className={`${c.in} ${c.inNum}`}
-      placeholder={ph}
-      aria-label={label}
-      {...register(`invoices.${gi}.lines.${li}.${field}`)}
-      aria-invalid={!!lineErr(li, field)}
-      title={lineErr(li, field)}
-    />
-  );
-
-  return (
-    <>
-      <div className={c.gridWrap}>
-        <div className={`${c.grid} ${c.gridImport}`}>
-          <div className={c.gHead}>
-            <div>Item</div>
-            <div>CDC No.</div>
-            <div>Material</div>
-            <div className={c.r}>Quantity</div>
-            <div>Unit</div>
-            <div className={c.r}>NW (kg)</div>
-            <div className={c.r}>GW (kg)</div>
-            <div className={c.r}>Unit price</div>
-            <div className={c.r}>Amount (USD)</div>
-            <div />
-          </div>
-          {lines.fields.map((f, li) => {
-            const l = watchedLines?.[li];
-            const amount =
-              l && l.pcs && l.fobUnitPrice ? toNum(l.pcs) * toNum(l.fobUnitPrice) : null;
-            const it = itemOf(l?.cdcNo);
-            const after = it ? remainingAfter.get(it.id) : undefined;
-            const over = after !== undefined && after < -1e-9;
-            return (
-              <div className={c.gRow} key={f.id}>
-                <div>
-                  <select
-                    className={c.in}
-                    aria-label="Item"
-                    value={itemOf(l?.cdcNo)?.declareRef ?? l?.cdcNo ?? ''}
-                    onChange={(ev) => pickItem(li, ev.target.value)}
-                    aria-invalid={!!lineErr(li, 'cdcNo')}
-                  >
-                    <option value="">
-                      {cdcItems.length ? 'Choose item…' : 'No CDC master list items'}
-                    </option>
-                    {/* A saved item no longer on the list stays shown as it was. */}
-                    {l?.cdcNo && !itemOf(l.cdcNo) && (
-                      <option value={l.cdcNo}>{l.description || l.cdcNo}</option>
-                    )}
-                    {CUT_STOCK_CATEGORIES.map((cat) => {
-                      const items = cdcItems.filter((it) => it.category === cat);
-                      return items.length ? (
-                        <optgroup key={cat} label={CUT_STOCK_CATEGORY_LABEL[cat]}>
-                          {items.map((it) => (
-                            <option key={it.id} value={it.declareRef}>
-                              {it.name}
-                            </option>
-                          ))}
-                        </optgroup>
-                      ) : null;
-                    })}
-                  </select>
-                  {after !== undefined && (
-                    <span className={c.hint} data-over={over}>
-                      Balance after saving: {fmtNum(after)} {it?.unit}
-                    </span>
-                  )}
-                </div>
-                {Auto(li, 'cdcNo', 'CDC No.')}
-                {Auto(li, 'material', 'Material')}
-                {F(li, 'pcs', 'Quantity', '0')}
-                {Auto(li, 'unit', 'CDC Unit')}
-                {F(li, 'netWeightKg', 'NW (kg)', '0.00')}
-                {F(li, 'grossWeightKg', 'GW (kg)', '0.00')}
-                {F(li, 'fobUnitPrice', 'Unit price (USD)', '0.00')}
-                <div className={c.amount}>{amount !== null ? money(amount) : ''}</div>
-                {lines.fields.length > 1 ? (
-                  <button
-                    type="button"
-                    className={c.del}
-                    title="Remove item"
-                    aria-label="Remove item"
-                    onClick={() => lines.remove(li)}
-                  >
-                    ×
-                  </button>
-                ) : (
-                  <span />
-                )}
-                {over && (
-                  <div className={c.full}>
-                    {can('cutstock:override') ? (
-                      <input
-                        type="text"
-                        className={c.in}
-                        placeholder="Reason for importing over the balance (required)"
-                        {...register(`invoices.${gi}.lines.${li}.overrideReason`)}
-                      />
-                    ) : (
-                      <FieldError message="More than the remaining balance. A Manager must approve this item." />
-                    )}
-                  </div>
-                )}
-              </div>
-            );
-          })}
-          <div className={c.gTotal} aria-label="Invoice total">
-            <div className={c.gTotalLabel} style={{ gridColumn: 'span 3' }}>
-              Invoice total
-            </div>
-            <div className={c.r}>{fmtNum(sum.qty, 2)}</div>
-            <div />
-            <div className={c.r}>{fmtNum(sum.nw, 2)}</div>
-            <div className={c.r}>{fmtNum(sum.gw, 2)}</div>
-            <div />
-            <div className={`${c.r} ${c.accent}`}>{money(sum.amount)}</div>
-            <div />
-          </div>
-        </div>
-      </div>
-      <div className={c.foot}>
-        <button
-          type="button"
-          className={`${c.btn} ${c.btnAdd}`}
-          onClick={() => lines.append(blankLine())}
-        >
-          <Icon d={ICON_PLUS} /> Add item
-        </button>
-      </div>
-    </>
-  );
-}
